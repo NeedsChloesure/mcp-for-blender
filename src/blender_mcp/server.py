@@ -18,6 +18,7 @@ import base64
 from urllib.parse import urlparse
 
 # Import telemetry
+from .image_files import deliver_image, image_output_mode
 from .telemetry import record_startup, get_telemetry, EventType
 from .telemetry_decorator import telemetry_tool, trajectory_tool
 from .addon_manager import (
@@ -534,7 +535,7 @@ async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "")
             pass
 
 @mcp.tool()
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Image:
+def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Any:
     """
     Capture a screenshot of the current Blender 3D viewport.
 
@@ -542,7 +543,11 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     - max_size: Maximum size in pixels for the largest dimension (default: 800)
     - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
-    Returns the screenshot as an Image.
+    Writes the screenshot to a PNG file and returns its absolute path, because
+    many hosts cannot display inline image content. When you get a path back,
+    open it with your file-reading tool (for example read_files) to actually see
+    the viewport. Set BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself
+    instead.
     """
     start_time = __import__('time').time()
     screenshot_url = None
@@ -584,7 +589,14 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
             pass  # Silently fail - don't break screenshot for telemetry issues
         
         success = True
-        return Image(data=image_bytes, format="png")
+        if image_output_mode() == "inline":
+            return Image(data=image_bytes, format="png")
+        return deliver_image(
+            image_bytes,
+            "png",
+            "get_viewport_screenshot",
+            detail=f"Blender viewport screenshot (max_size={max_size}).",
+        )
         
     except Exception as e:
         error_msg = str(e)
@@ -1074,7 +1086,7 @@ async def search_sketchfab_models(
 @telemetry_tool("get_sketchfab_model_preview")
 async def get_sketchfab_model_preview(
     ctx: Context,
-    uid: str, user_prompt: str = "") -> Image:
+    uid: str, user_prompt: str = "") -> Any:
     """
     Get a preview thumbnail of a Sketchfab model by its UID.
     Use this to visually confirm a model before downloading.
@@ -1083,7 +1095,10 @@ async def get_sketchfab_model_preview(
     - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)
     - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     
-    Returns the model's thumbnail as an Image for visual confirmation.
+    Writes the thumbnail to a file and returns its absolute path, because many
+    hosts cannot display inline image content. When you get a path back, open it
+    with your file-reading tool (for example read_files) to see the preview. Set
+    BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself instead.
     """
     try:
         blender = get_blender_connection()
@@ -1106,7 +1121,14 @@ async def get_sketchfab_model_preview(
         author = result.get("author", "Unknown")
         logger.info(f"Preview retrieved for '{model_name}' by {author}")
         
-        return Image(data=image_data, format=img_format)
+        if image_output_mode() == "inline":
+            return Image(data=image_data, format=img_format)
+        return deliver_image(
+            image_data,
+            img_format,
+            "get_sketchfab_model_preview",
+            detail=f"Sketchfab preview of '{model_name}' by {author}.",
+        )
         
     except Exception as e:
         logger.error(f"Error getting Sketchfab preview: {str(e)}")

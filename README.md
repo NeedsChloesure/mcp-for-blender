@@ -11,8 +11,8 @@
 
 Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/blender-mcp)
-[![PyPI Version](https://img.shields.io/pypi/v/blender-mcp?color=blue)](https://pypi.org/project/blender-mcp/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/mcp-for-blender?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/mcp-for-blender)
+[![PyPI Version](https://img.shields.io/pypi/v/mcp-for-blender?color=blue)](https://pypi.org/project/mcp-for-blender/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/SNqPn4TcKQ)
 
@@ -564,7 +564,7 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Export the scene, the selection or named objects to GLB/FBX for other applications (`export_scene`)
 - Look up node schemas and the bpy API reference instead of guessing socket order or enum names
-- Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
+- Search and download free CC0 HDRIs, textures and models from [Poly Haven](https://polyhaven.com/)
 - Search and download models from [Sketchfab](https://sketchfab.com/)
 - Search and download low-poly models from [Poly Pizza](https://poly.pizza/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/) and [Hunyuan3D](https://3d.hunyuan.tencent.com/)
@@ -581,6 +581,47 @@ Which Tencent Cloud service the addon must call depends on where your account li
 International credentials sent to the mainland endpoint fail with `AuthFailure.SignatureFailure` or
 `ResourceUnavailable`, so tick the toggle when your SecretId/SecretKey come from tencentcloud.com.
 The toggle sits under **Tencent Hunyuan 3D → Official API** in the sidebar.
+
+#### Poly Haven
+
+[Poly Haven](https://polyhaven.com/) publishes around 2,400 HDRIs, textures and models,
+all CC0 and free, funded by donations rather than by selling the assets. There is no API
+key, no account and no rate limit worth worrying about.
+
+In the 3D View sidebar, tick **Poly Haven**. That is the whole setup.
+
+Worked example:
+
+> *"Light the scene with an overcast afternoon HDRI and put a rusty metal texture on the wall"*
+
+Claude calls `search_polyhaven_assets(query="overcast afternoon", asset_type="hdris")`,
+which understands the intent rather than matching keywords - "couch" finds sofas, and it
+works in any language. It can then check the thumbnail with
+`get_polyhaven_asset_preview(asset_id="...")` before spending the bandwidth, and import
+with `download_polyhaven_asset(...)`.
+
+`get_polyhaven_categories(asset_type="textures")` returns the category tree and every
+attribute that type can be filtered on, each with the values it accepts - weather and time
+of day for HDRIs, surface use and condition for textures, material and whether a model is
+rigged or ships level-of-detail variants. Pass a category path or those attributes to
+`search_polyhaven_assets`; matching on a category is inclusive, so a parent selects
+everything nested beneath it.
+
+Models are imported from the `.blend`, which is the file the artist authored - the glTF,
+FBX and USD versions are generated from it and lose material detail. Textures build a
+Principled material from the maps that drive it, and skip the repackings and alternate
+conventions that nothing reads. HDRIs are packed into the file, so the lighting survives
+being saved and reopened somewhere else, and arrive in a new world rather than overwriting
+one you built.
+
+**Licence and attribution:** every Poly Haven asset is CC0. You never have to credit
+anyone, for anything, commercial or not. Their
+[API terms](https://github.com/Poly-Haven/Public-API/blob/master/ToS.md) do ask that
+software built on the live API makes clear where the assets come from, so the search and
+import responses name the source and link the asset's page. On import, `polyhaven_id`,
+`polyhaven_url`, `polyhaven_authors`, `polyhaven_resolution` and `polyhaven_licence` are
+written onto the imported objects, materials, images and world as custom properties, so
+whoever opens the `.blend` later can still find the asset and the artist who made it.
 
 #### Poly Pizza
 
@@ -664,7 +705,7 @@ For headless setups or CI, credentials can also be injected by environment varia
 |---|---|
 | **Connection issues** | Make sure the Blender addon server is running, and the MCP server is configured on Claude. **Do not** run the `uvx` command in the terminal. Sometimes the first command won't go through, but after that it starts working. |
 | **Timeout errors** | Try simplifying your requests or breaking them into smaller steps. |
-| **Poly Haven integration** | Claude is sometimes erratic with its behaviour. |
+| **Blender freezes during a Poly Haven download** | Assets are downloaded on Blender's main thread, so the UI stops responding until the transfer finishes. File size grows roughly fourfold per resolution step, so ask for 1k or 2k unless the asset is held close to camera. |
 | **Poly Pizza download fails with a Cloudflare challenge** | `static.poly.pizza` is behind bot protection and blocks datacenter, VPN and cloud IPs. Your API key is fine - the CDN never sees it. Retry from a normal connection, or download the `.glb` by hand and use **File → Import → glTF 2.0**. |
 | **Have you tried turning it off and on again?** | If you're still having connection errors, try restarting both Claude and the Blender server. |
 
@@ -686,13 +727,15 @@ The system uses a simple JSON-based protocol over TCP sockets:
 
 ## Telemetry Control
 
-MCP for Blender collects anonymous usage data to help improve the tool. Telemetry consent is **on by default**, and you can turn it off in two ways:
+Telemetry is **opt-in**. Collection of your content is off by default and stays off until you explicitly turn it on.
 
-**1. In Blender** — go to **Edit → Preferences → Add-ons → MCP for Blender** and uncheck the telemetry consent checkbox.
+**What is collected by default (no opt-in):** a minimal anonymous usage record so I can count active users and see which tools get used — a randomly generated install ID, a session ID, the tool name, whether it succeeded, how long it took, the MCP for Blender and Blender versions, your operating system, and a timestamp.
 
-- With consent (checked, the default): view the TnC for more details on data collected.
+**Never collected without opting in:** your prompts, generated code, viewport screenshots, scene data, and trajectory steps.
 
-**2. Environment Variable** — completely disable all telemetry by running:
+**To opt in** — go to **Edit → Preferences → Add-ons → MCP for Blender** and check the telemetry consent checkbox. Some MCP clients will also offer you a one-time opt-in prompt at the start of a conversation. Opting in adds prompts, generated code, screenshots, and trajectory data to what's collected; see the TnC for details. You can turn it back off in the same place at any time.
+
+**To turn off telemetry entirely**, including the minimal anonymous usage record, set an environment variable:
 
 ```bash
 DISABLE_TELEMETRY=true uvx mcp-for-blender
@@ -716,7 +759,7 @@ Or add it to your MCP config:
 
 Telemetry data is not linked to your name or account. It may be used to improve MCP for Blender, for research, and to train AI models.
 
-Full detail on what is collected, and the license you grant by leaving telemetry on, is in [TERMS_AND_CONDITIONS.md](TERMS_AND_CONDITIONS.md).
+Full detail on what is collected, and the license you grant by opting in, is in [TERMS_AND_CONDITIONS.md](TERMS_AND_CONDITIONS.md).
 
 ---
 

@@ -1,18 +1,18 @@
 """First-run telemetry consent prompt.
 
 Consent lives in one place: the ``telemetry_consent`` checkbox in the Blender
-addon preferences, which is on by default. This module only decides *when* to
-ask about it and how the answer gets there, so it only has anything to do for
-users who have turned the checkbox off.
+addon preferences, which is **off by default**. Collection of prompts, code,
+screenshots and trajectory data is strictly opt-in, so this module is what gives
+most users their one chance to say yes.
 
 Only clients declaring the ``elicitation`` capability are asked, via a yes/no
 dialog the client renders itself; only an explicit ``accept`` with
-``consent=True`` turns collection back on. Clients without it are left alone --
-a model relaying a prose answer is not the user answering, so those users are
-asked in the Blender addon instead.
+``consent=True`` turns collection on. Clients without it are left alone -- a
+model relaying a prose answer is not the user answering, so those users opt in
+via the Blender addon instead.
 
-Asked at most once per conversation. A decline is remembered on disk so it is
-not re-asked on every future conversation.
+Asked at most once per conversation. An answer either way is remembered on disk
+so it is not re-asked on every future conversation.
 """
 from __future__ import annotations
 
@@ -29,7 +29,9 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("BlenderMCPConsent")
 
 # Bump to re-ask everyone (e.g. if what gets collected changes materially).
-CONSENT_PROMPT_VERSION = 1
+# v2: telemetry became opt-in. Answers recorded under the old on-by-default
+# regime do not carry over -- an opt-out then is not an opt-in now.
+CONSENT_PROMPT_VERSION = 2
 
 _state_lock = threading.Lock()
 # Keyed by client session: the server process outlives any one conversation.
@@ -53,7 +55,7 @@ PROMPT_MESSAGE = (
     "your prompts, the code that gets generated, viewport screenshots, and scene "
     "metadata. It is not linked to your name or account, and you can change this "
     "any time in Blender under Preferences > Add-ons > Blender MCP.\n\n"
-    "Collection is on by default, but it is currently OFF for you. Turn it back on?"
+    "This is off by default and stays off unless you turn it on. Opt in?"
 )
 
 def _state_path() -> Path:
@@ -178,7 +180,7 @@ async def maybe_prompt_for_consent(ctx: Any) -> str:
             return ""
 
         if not _client_supports_elicitation(ctx):
-            # No dialog available. Consent is asked for in the Blender addon
+            # No dialog available. Opting in happens in the Blender addon
             # instead -- a model relaying prose is not the user answering.
             return ""
 

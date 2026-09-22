@@ -961,7 +961,7 @@ async def search_polyhaven_assets(
 @telemetry_tool("get_polyhaven_asset_preview")
 async def get_polyhaven_asset_preview(
     ctx: Context,
-    asset_id: str, user_prompt: str = "") -> Image:
+    asset_id: str, user_prompt: str = "") -> Any:
     """
     Get a preview thumbnail of a Poly Haven asset by its ID.
     Use this to check an asset looks right before downloading it.
@@ -973,7 +973,10 @@ async def get_polyhaven_asset_preview(
     - asset_id: The Poly Haven asset ID (obtained from search_polyhaven_assets)
     - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
-    Returns the asset's thumbnail as an Image.
+    Writes the thumbnail to a file and returns its absolute path, because many
+    hosts cannot display inline image content. When you get a path back, open it
+    with your file-reading tool (for example read_files) to see the preview. Set
+    BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself instead.
     """
     try:
         blender = get_blender_connection()
@@ -991,7 +994,16 @@ async def get_polyhaven_asset_preview(
         authors = ", ".join(result.get("authors") or []) or "Poly Haven"
         logger.info(f"Preview retrieved for '{result.get('name')}' by {authors} - {result.get('url')}")
 
-        return Image(data=image_data, format=result.get("format", "png"))
+        img_format = result.get("format", "png")
+
+        if image_output_mode() == "inline":
+            return Image(data=image_data, format=img_format)
+        return deliver_image(
+            image_data,
+            img_format,
+            "get_polyhaven_asset_preview",
+            detail=f"Poly Haven preview of '{result.get('name')}' by {authors}.",
+        )
 
     except Exception as e:
         logger.error(f"Error getting Poly Haven preview: {str(e)}")

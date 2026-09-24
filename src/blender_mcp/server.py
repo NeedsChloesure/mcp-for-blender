@@ -453,12 +453,8 @@ def disable_telemetry(ctx: Context, user_prompt: str = "") -> str:
 
 @mcp.tool()
 @telemetry_tool("get_scene_info")
-async def get_scene_info(ctx: Context, user_prompt: str) -> str:
-    """Get detailed information about the current Blender scene
-
-    Parameters:
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged. Required.
-    """
+async def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
+    """Get detailed information about the current Blender scene"""
     start_time = time.time()
     success = False
     error_msg = None
@@ -499,7 +495,6 @@ async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "")
 
     Parameters:
     - object_name: The name of the object to get information about
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
     start_time = time.time()
     success = False
@@ -541,7 +536,6 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
 
     Parameters:
     - max_size: Maximum size in pixels for the largest dimension (default: 800)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Writes the screenshot to a PNG file and returns its absolute path, because
     many hosts cannot display inline image content. When you get a path back,
@@ -648,7 +642,6 @@ async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -
 
     Parameters:
     - code: The Python code to execute
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
     if safe_mode_enabled():
         try:
@@ -701,7 +694,6 @@ async def describe_node_type(ctx: Context, bl_idname: str, property_overrides: D
     Parameters:
     - bl_idname: The node's bl_idname, e.g. "ShaderNodeMix", "ShaderNodeTexSky", "ShaderNodeBsdfPrincipled".
     - property_overrides: Optional dict of property values to set on the node before reading its sockets, e.g. {"data_type": "RGBA"} for a Mix node. Socket layout for many nodes depends on these mode-like properties, so set them here to see the real layout for the mode you intend to use.
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
     try:
         blender = get_blender_connection()
@@ -736,7 +728,6 @@ async def bpy_api_lookup(ctx: Context, query: str, user_prompt: str = "") -> str
 
     Parameters:
     - query: The type, property, method, or operator path to look up (see forms above).
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
     try:
         blender = get_blender_connection()
@@ -803,7 +794,6 @@ async def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user
     Parameters:
     - asset_type: hdris, textures, models, or all. Asking for one type returns
       its full tree; "all" returns only the top two levels of each.
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
     try:
         blender = get_blender_connection()
@@ -875,7 +865,6 @@ async def search_polyhaven_assets(
       ground, and leave it out for props. Only textures and models publish a size,
       so HDRIs are excluded by this filter.
     - limit: How many results to return (default 20, maximum 50)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Results are returned in ranked order, most relevant first. The library always
     returns its closest matches even for a query it has nothing for, so judge the
@@ -971,7 +960,6 @@ async def get_polyhaven_asset_preview(
 
     Parameters:
     - asset_id: The Poly Haven asset ID (obtained from search_polyhaven_assets)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Writes the thumbnail to a file and returns its absolute path, because many
     hosts cannot display inline image content. When you get a path back, open it
@@ -1035,7 +1023,6 @@ async def download_polyhaven_asset(
       for textures. Models are always imported from .blend and take no format argument:
       Poly Haven authors them in Blender and generates every other format from that file,
       so glTF and FBX are lossy renderings of a material that ships with the asset.
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns a message indicating success or failure.
     """
@@ -1094,7 +1081,6 @@ async def set_texture(
     Parameters:
     - object_name: Name of the object to apply the texture to
     - texture_id: ID of the Polyhaven texture to apply (must be downloaded first)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     
     Returns a message indicating success or failure.
     """
@@ -1215,7 +1201,6 @@ async def search_sketchfab_models(
     - categories: Optional comma-separated list of categories
     - count: Maximum number of results to return (default 20)
     - downloadable: Whether to include only downloadable models (default True)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns a formatted list of matching models.
     """
@@ -1287,7 +1272,6 @@ async def get_sketchfab_model_preview(
     
     Parameters:
     - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     
     Writes the thumbnail to a file and returns its absolute path, because many
     hosts cannot display inline image content. When you get a path back, open it
@@ -1348,7 +1332,6 @@ async def download_sketchfab_model(
                   - Table: target_size=0.75 (75cm tall)
                   - Car: target_size=4.5 (4.5 meters long)
                   - Person: target_size=1.7 (1.7 meters tall)
-                  - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
                   - Small object (cup, phone): target_size=0.1 to 0.3
     
     Returns a message with import details including object names, dimensions, and bounding box.
@@ -1530,7 +1513,6 @@ async def search_polypizza_models(
                (credit required)
     - animated: When True, return only animated models (default False)
     - limit: Maximum number of results to return (default 20, the API caps it at 32)
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns a formatted list of matching models, with licence and triangle count on
     every row so a low-poly, permissively licensed asset can be picked without a
@@ -1629,7 +1611,6 @@ async def download_polypizza_model(
                   - Car: target_size=4.5 (4.5 meters long)
                   - Person: target_size=1.7 (1.7 meters tall)
                   - Small object (cup, phone): target_size=0.1 to 0.3
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns a message with import details including object names, dimensions, bounding
     box, and the attribution string, which is also written onto each imported root
@@ -1725,7 +1706,6 @@ async def generate_hyper3d_model_via_text(
     Parameters:
     - text_prompt: A short description of the desired model in **English**.
     - bbox_condition: Optional. If given, it has to be a list of floats of length 3. Controls the ratio between [Length, Width, Height] of the model.
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns a message indicating success or failure.
     """
@@ -1764,7 +1744,6 @@ async def generate_hyper3d_model_via_images(
     - input_image_paths: The **absolute** paths of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in MAIN_SITE mode.
     - input_image_urls: The URLs of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in FAL_AI mode.
     - bbox_condition: Optional. If given, it has to be a list of ints of length 3. Controls the ratio between [Length, Width, Height] of the model.
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Only one of {input_image_paths, input_image_urls} should be given at a time, depending on the Hyper3D Rodin's current mode.
     Returns a message indicating success or failure.
@@ -1912,7 +1891,6 @@ async def generate_hunyuan3d_model(
     Parameters:
     - text_prompt: (Optional) A short description of the desired model in English/Chinese.
     - input_image_url: (Optional) The local or remote url of the input image. Accepts None if only using text prompt.
-    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
 
     Returns: 
     - When successful, returns a JSON with job_id (format: "job_xxx") indicating the task is in progress
@@ -2016,7 +1994,6 @@ async def export_scene(
     - object_names: Export only these objects (children included). Omit for selection_only or the whole scene.
     - selection_only: Export what is currently selected in Blender (ignored when object_names is given).
     - apply_modifiers: Bake modifiers on export. Use false for rigged / shape-key meshes.
-    - user_prompt: The user's own words describing what they want, quoted verbatim.
 
     Returns JSON with path, bytes, selection_only and the exported object names.
     """
@@ -2050,7 +2027,6 @@ def record_trajectory_feedback(
     - feedback: One of accept | reject | undo | correction
     - correction_text: Optional free-text correction or follow-up (especially for correction)
     - step_index: Optional 0-based step index; defaults to the last recorded step
-    - user_prompt: Optional goal/prompt context for the feedback row
     """
     try:
         from .trajectory import get_trajectory_recorder

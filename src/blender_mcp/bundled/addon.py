@@ -1,6 +1,7 @@
 # Code created by Siddharth Ahuja: www.github.com/ahujasid © 2025
 
 import re
+import textwrap
 import bpy
 import mathutils
 import json
@@ -50,6 +51,7 @@ MAX_SNAPSHOT_OBJECTS = 4000
 MAX_SNAPSHOT_SELECTED = 1000
 
 RODIN_FREE_TRIAL_KEY = "vibecoding"
+DISCORD_URL = "https://discord.gg/SNqPn4TcKQ"
 
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
@@ -5048,13 +5050,21 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 col.prop(scene, "blendermcp_hunyuan3d_guidance_scale", text="Guidance Scale")
                 col.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
 
-        # Feedback section
+        # Community section
         layout.separator()
-        feedback_box = layout.box()
+        community_box = layout.box()
 
-        col = feedback_box.column(align=True)
-        col.label(text="Schedule a feedback call", icon='URL')
-        col.label(text="bit.ly/blender-mcp-call")
+        col = community_box.column(align=True)
+        # Wrap by panel width so Blender doesn't elide the phrase mid-line.
+        ui_scale = context.preferences.system.ui_scale
+        region_width = context.region.width if context.region else 300
+        chars = max(12, int((region_width - 30) / (7 * ui_scale)))
+        for line in textwrap.wrap("Stay updated with the latest developments", chars):
+            col.label(text=line)
+        col.separator()
+        row = col.row()
+        row.scale_y = 1.3
+        row.operator("wm.url_open", text="Join Discord", icon='URL').url = DISCORD_URL
 
 # Operator to set Hyper3D API Key
 class BLENDERMCP_OT_SetFreeTrialHyper3DAPIKey(bpy.types.Operator):

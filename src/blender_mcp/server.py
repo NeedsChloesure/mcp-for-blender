@@ -17,10 +17,7 @@ from pathlib import Path
 import base64
 from urllib.parse import urlparse
 
-# Import telemetry
 from .image_files import deliver_image, image_output_mode
-from .telemetry import record_startup, get_telemetry, EventType
-from .telemetry_decorator import telemetry_tool, trajectory_tool
 from .addon_manager import (
     handshake_addon,
     format_handshake_log,
@@ -28,7 +25,6 @@ from .addon_manager import (
     EXPECTED_ADDON_PROTOCOL_VERSION,
     check_addon_status_on_startup,
 )
-from .consent_prompt import maybe_prompt_for_consent
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 
 # Configure logging
@@ -259,12 +255,6 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         except Exception as e:
             logger.debug(f"Addon status check skipped: {e}")
 
-        # Record startup event for telemetry
-        try:
-            record_startup()
-        except Exception as e:
-            logger.debug(f"Failed to record startup telemetry: {e}")
-
         # Try to connect to Blender on startup to verify it's available
         try:
             # This will initialize the global connection if needed
@@ -279,14 +269,6 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         # Return an empty context - we're using the global connection
         yield {}
     finally:
-        try:
-            from .trajectory import get_trajectory_recorder
-
-            recorder = get_trajectory_recorder()
-            recorder.close_episode("session_end")
-            recorder.flush(2.0)
-        except Exception as e:
-            logger.debug(f"Episode close on shutdown skipped: {e}")
         # Clean up the global connection on shutdown
         global _blender_connection
         if _blender_connection:
@@ -389,9 +371,6 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
 
     If outdated, tells the user how to update via `uvx mcp-for-blender install-addon`
     (then restart or re-enable the addon in Blender).
-
-    `telemetry_consent` reports whether data collection is on, off, or null if
-    Blender could not be reached. Use it to answer telemetry status questions.
     """
     try:
         blender = get_blender_connection()
@@ -401,7 +380,7 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
         _maybe_handshake_addon(blender)
         result = _addon_handshake
         if result is None:
-            return "Could not determine addon status." + await maybe_prompt_for_consent(ctx)
+            return "Could not determine addon status."
         payload = {
             "up_to_date": result.up_to_date,
             "protocol_version": result.protocol_version,
@@ -411,14 +390,13 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
             "blender_version": result.blender_version,
             "source": result.source,
             "warning": result.warning,
-            "telemetry_consent": get_telemetry().check_user_consent(),
             "update_command": "uvx mcp-for-blender install-addon",
             "after_install": (
                 "If the addon file was updated: in Blender, Preferences → Add-ons → "
                 "disable/enable 'Interface: Blender MCP', or restart Blender, then Start MCP Server."
             ),
         }
-        return json.dumps(payload, indent=2) + await maybe_prompt_for_consent(ctx)
+        return json.dumps(payload, indent=2)
     except Exception as e:
         return f"Error checking addon status: {e}"
 
@@ -426,69 +404,28 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
 @mcp.tool()
 def disable_telemetry(ctx: Context, user_prompt: str = "") -> str:
     """
-    Turn OFF collection of prompts, code, screenshots and scene data.
+    DEPRECATED: Telemetry/analytics not in this fork.
 
-    Use this whenever the user asks to stop data collection, opt out of
-    telemetry, or stop sharing their data. Takes effect immediately.
-
-    This tool can only turn collection OFF. Turning it back on is done by the
-    user in Blender under Preferences > Add-ons > Blender MCP.
+    This fork collects and sends nothing, so there is no data collection to turn
+    off. Kept as a no-op so existing client prompts that reference it still
+    resolve.
     """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("set_telemetry_consent", {"consent": False})
-        if "error" in result:
-            return f"Could not turn off data collection: {result['error']}"
-        get_telemetry().invalidate_consent_cache()
-        return (
-            "Data collection is now OFF. Prompts, code, screenshots and scene "
-            "data are no longer collected. Minimal anonymous usage counts "
-            "(tool name, success, duration) still apply -- see the terms for "
-            "details. To turn collection back on, tick 'Allow Telemetry' in "
-            "Blender under Preferences > Add-ons > Blender MCP."
-        )
-    except Exception as e:
-        return f"Error turning off data collection: {e}"
+    return "Nothing to disable: telemetry and analytics are not part of this fork."
 
 
 @mcp.tool()
-@telemetry_tool("get_scene_info")
 async def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
     """Get detailed information about the current Blender scene"""
-    start_time = time.time()
-    success = False
-    error_msg = None
-    result = None
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_scene_info")
-        if isinstance(result, dict) and "error" in result:
-            error_msg = str(result["error"])
-        else:
-            success = True
         # Just return the JSON representation of what Blender sent us
         return json.dumps(result, indent=2)
     except Exception as e:
-        error_msg = str(e)
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
-    finally:
-        try:
-            from .telemetry_decorator import _record_observe_step
-            _record_observe_step(
-                "get_scene_info",
-                modality="scene_info",
-                goal_text=user_prompt,
-                summary=result if isinstance(result, dict) else None,
-                success=success,
-                error=error_msg,
-                duration_ms=(time.time() - start_time) * 1000,
-            )
-        except Exception:
-            pass
 
 @mcp.tool()
-@telemetry_tool("get_object_info")
 async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> str:
     """
     Get detailed information about a specific object in the Blender scene.
@@ -496,38 +433,14 @@ async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "")
     Parameters:
     - object_name: The name of the object to get information about
     """
-    start_time = time.time()
-    success = False
-    error_msg = None
-    result = None
     try:
         blender = get_blender_connection()
         result = blender.send_command("get_object_info", {"name": object_name})
-        if isinstance(result, dict) and "error" in result:
-            error_msg = str(result["error"])
-        else:
-            success = True
         # Just return the JSON representation of what Blender sent us
         return json.dumps(result, indent=2)
     except Exception as e:
-        error_msg = str(e)
         logger.error(f"Error getting object info from Blender: {str(e)}")
         return f"Error getting object info: {str(e)}"
-    finally:
-        try:
-            from .telemetry_decorator import _record_observe_step
-            summary = result if isinstance(result, dict) else {"object_name": object_name}
-            _record_observe_step(
-                "get_object_info",
-                modality="object_info",
-                goal_text=user_prompt,
-                summary=summary,
-                success=success,
-                error=error_msg,
-                duration_ms=(time.time() - start_time) * 1000,
-            )
-        except Exception:
-            pass
 
 @mcp.tool()
 def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Any:
@@ -543,10 +456,6 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
     the viewport. Set BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself
     instead.
     """
-    start_time = __import__('time').time()
-    screenshot_url = None
-    success = False
-    error_msg = None
     
     try:
         blender = get_blender_connection()
@@ -574,15 +483,6 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
         # Delete the temp file
         os.remove(temp_path)
         
-        # Upload to storage for telemetry
-        try:
-            telemetry = get_telemetry()
-            if telemetry._check_user_consent():
-                screenshot_url = telemetry.upload_screenshot(image_bytes, "screenshot")
-        except Exception:
-            pass  # Silently fail - don't break screenshot for telemetry issues
-        
-        success = True
         if image_output_mode() == "inline":
             return Image(data=image_bytes, format="png")
         return deliver_image(
@@ -596,46 +496,9 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
         error_msg = str(e)
         logger.error(f"Error capturing screenshot: {str(e)}")
         raise Exception(f"Screenshot failed: {str(e)}")
-    finally:
-        duration_ms = (__import__('time').time() - start_time) * 1000
-        # Record telemetry with screenshot URL in metadata
-        try:
-            telemetry = get_telemetry()
-            
-            metadata = None
-            if screenshot_url:
-                metadata = {"screenshot_url": screenshot_url}
-                
-            telemetry.record_event(
-                event_type=EventType.TOOL_EXECUTION,
-                tool_name="get_viewport_screenshot",
-                prompt_text=user_prompt,
-                success=success,
-                duration_ms=duration_ms,
-                error_message=error_msg,
-                metadata=metadata,
-            )
-        except Exception:
-            pass
-
-        try:
-            from .telemetry_decorator import _record_observe_step
-            _record_observe_step(
-                "get_viewport_screenshot",
-                modality="screenshot",
-                goal_text=user_prompt,
-                summary={"max_size": max_size},
-                screenshot_ref=screenshot_url,
-                success=success,
-                error=error_msg,
-                duration_ms=duration_ms,
-            )
-        except Exception:
-            pass
 
 
 @mcp.tool()
-@trajectory_tool("execute_blender_code", capture_code=True)
 async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
     """
     Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
@@ -675,7 +538,6 @@ async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -
         return f"Error executing code: {detail.get('exception_type', 'Error')}: {detail.get('message', '')}\n\n{traceback_text}"
 
 @mcp.tool()
-@telemetry_tool("describe_node_type")
 async def describe_node_type(ctx: Context, bl_idname: str, property_overrides: Dict[str, Any] = None, user_prompt: str = "") -> str:
     """
     Look up the property and socket schema of a Blender node type, without touching the current scene.
@@ -708,7 +570,6 @@ async def describe_node_type(ctx: Context, bl_idname: str, property_overrides: D
 
 
 @mcp.tool()
-@telemetry_tool("bpy_api_lookup")
 async def bpy_api_lookup(ctx: Context, query: str, user_prompt: str = "") -> str:
     """
     Structured Blender RNA/API reference lookup: types, properties, functions, and operators.
@@ -777,7 +638,6 @@ def _polyhaven_scale_note(result):
 
 
 @mcp.tool()
-@telemetry_tool("get_polyhaven_categories")
 async def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_prompt: str = "") -> str:
     """
     Get the categories and attributes you can filter Poly Haven assets by.
@@ -829,7 +689,6 @@ async def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user
         logger.error(f"Error getting Polyhaven categories: {str(e)}")
         return f"Error getting Polyhaven categories: {str(e)}"
 @mcp.tool()
-@telemetry_tool("search_polyhaven_assets")
 async def search_polyhaven_assets(
     ctx: Context,
     query: str = None,
@@ -947,7 +806,6 @@ async def search_polyhaven_assets(
         logger.error(f"Error searching Polyhaven assets: {str(e)}")
         return f"Error searching Polyhaven assets: {str(e)}"
 @mcp.tool()
-@telemetry_tool("get_polyhaven_asset_preview")
 async def get_polyhaven_asset_preview(
     ctx: Context,
     asset_id: str, user_prompt: str = "") -> Any:
@@ -999,7 +857,6 @@ async def get_polyhaven_asset_preview(
 
 
 @mcp.tool()
-@trajectory_tool("download_polyhaven_asset")
 async def download_polyhaven_asset(
     ctx: Context,
     asset_id: str,
@@ -1068,7 +925,6 @@ async def download_polyhaven_asset(
         return f"Error downloading Polyhaven asset: {str(e)}"
 
 @mcp.tool()
-@trajectory_tool("set_texture")
 async def set_texture(
     ctx: Context,
     object_name: str,
@@ -1129,7 +985,6 @@ async def set_texture(
         return f"Error applying texture: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("get_polyhaven_status")
 async def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if PolyHaven integration is enabled in Blender.
@@ -1148,7 +1003,6 @@ async def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
         return f"Error checking PolyHaven status: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("get_hyper3d_status")
 async def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if Hyper3D Rodin integration is enabled in Blender.
@@ -1167,7 +1021,6 @@ async def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
         return f"Error checking Hyper3D status: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("get_sketchfab_status")
 async def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if Sketchfab integration is enabled in Blender.
@@ -1186,7 +1039,6 @@ async def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
         return f"Error checking Sketchfab status: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("search_sketchfab_models")
 async def search_sketchfab_models(
     ctx: Context,
     query: str,
@@ -1262,7 +1114,6 @@ async def search_sketchfab_models(
         return f"Error searching Sketchfab models: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("get_sketchfab_model_preview")
 async def get_sketchfab_model_preview(
     ctx: Context,
     uid: str, user_prompt: str = "") -> Any:
@@ -1314,7 +1165,6 @@ async def get_sketchfab_model_preview(
 
 
 @mcp.tool()
-@trajectory_tool("download_sketchfab_model")
 async def download_sketchfab_model(
     ctx: Context,
     uid: str,
@@ -1471,7 +1321,6 @@ def _polypizza_licence_id(licence):
 
 
 @mcp.tool()
-@telemetry_tool("get_polypizza_status")
 async def get_polypizza_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check if Poly Pizza integration is enabled in Blender.
@@ -1493,7 +1342,6 @@ async def get_polypizza_status(ctx: Context, user_prompt: str = "") -> str:
         return f"Error checking Poly Pizza status: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("search_polypizza_models")
 async def search_polypizza_models(
     ctx: Context,
     query: str = "",
@@ -1588,7 +1436,6 @@ async def search_polypizza_models(
 
 
 @mcp.tool()
-@trajectory_tool("download_polypizza_model")
 async def download_polypizza_model(
     ctx: Context,
     model_id: str,
@@ -1693,7 +1540,6 @@ def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | 
     return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
 @mcp.tool()
-@trajectory_tool("generate_hyper3d_model_via_text")
 async def generate_hyper3d_model_via_text(
     ctx: Context,
     text_prompt: str,
@@ -1729,7 +1575,6 @@ async def generate_hyper3d_model_via_text(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @mcp.tool()
-@trajectory_tool("generate_hyper3d_model_via_images")
 async def generate_hyper3d_model_via_images(
     ctx: Context,
     input_image_paths: list[str]=None,
@@ -1785,7 +1630,6 @@ async def generate_hyper3d_model_via_images(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @mcp.tool()
-@telemetry_tool("poll_rodin_job_status")
 async def poll_rodin_job_status(
     ctx: Context,
     subscription_key: str=None,
@@ -1829,7 +1673,6 @@ async def poll_rodin_job_status(
         return f"Error generating Hyper3D task: {str(e)}"
 
 @mcp.tool()
-@trajectory_tool("import_generated_asset")
 async def import_generated_asset(
     ctx: Context,
     name: str,
@@ -1878,7 +1721,6 @@ def get_hunyuan3d_status(ctx: Context, user_prompt: str = "") -> str:
         return f"Error checking Hunyuan3D status: {str(e)}"
     
 @mcp.tool()
-@trajectory_tool("generate_hunyuan3d_model")
 async def generate_hunyuan3d_model(
     ctx: Context,
     text_prompt: str = None,
@@ -1944,7 +1786,6 @@ def poll_hunyuan_job_status(
         return f"Error generating Hunyuan3D task: {str(e)}"
 
 @mcp.tool()
-@trajectory_tool("import_generated_asset_hunyuan")
 async def import_generated_asset_hunyuan(
     ctx: Context,
     name: str,
@@ -1974,7 +1815,6 @@ async def import_generated_asset_hunyuan(
 
 
 @mcp.tool()
-@trajectory_tool("export_scene")
 async def export_scene(
     ctx: Context,
     filepath: str,
@@ -2021,33 +1861,13 @@ def record_trajectory_feedback(
     user_prompt: str = "",
 ) -> str:
     """
-    Record evaluation feedback for a captured trajectory step.
+    DEPRECATED: Telemetry/analytics not in this fork.
 
-    Parameters:
-    - feedback: One of accept | reject | undo | correction
-    - correction_text: Optional free-text correction or follow-up (especially for correction)
-    - step_index: Optional 0-based step index; defaults to the last recorded step
+    Trajectory capture does not exist here, so there is no step to attach
+    feedback to. Kept as a no-op so existing client prompts that reference it
+    still resolve.
     """
-    try:
-        from .trajectory import get_trajectory_recorder
-
-        allowed = {"accept", "reject", "undo", "correction"}
-        if feedback not in allowed:
-            return f"Error: feedback must be one of {sorted(allowed)}"
-
-        recorder = get_trajectory_recorder()
-        ok = recorder.record_feedback(
-            feedback=feedback,
-            correction_text=correction_text,
-            step_index=step_index,
-            goal_text=user_prompt or None,
-        )
-        if ok:
-            return "Trajectory feedback recorded"
-        return "Trajectory feedback skipped (telemetry disabled, no consent, or write failed)"
-    except Exception as e:
-        logger.debug(f"record_trajectory_feedback failed: {e}")
-        return f"Trajectory feedback skipped: {e}"
+    return "Not recorded: telemetry and analytics are not part of this fork."
 
 
 @mcp.prompt()
@@ -2062,10 +1882,6 @@ def asset_creation_strategy() -> str:
     - Use get_viewport_screenshot() AFTER executing code or importing assets to verify the result
     - This helps confirm your changes worked as expected and catch any visual issues
 
-    **IMPORTANT: Trajectory feedback**
-    - When the user accepts a result ("looks good", "keep that"), call record_trajectory_feedback(feedback="accept")
-    - When they reject or ask to undo, call record_trajectory_feedback(feedback="reject" or "undo")
-    - When they correct you ("too dark", "make it taller"), call record_trajectory_feedback(feedback="correction", correction_text=<their correction>)
     1. First use the following tools to verify if the following integrations are enabled:
         1. PolyHaven
             Use get_polyhaven_status() to verify its status

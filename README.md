@@ -4,42 +4,94 @@
 
 **Connect Blender to any LLM**
 
-*formerly `blender-mcp` — the PyPI package is now [`mcp-for-blender`](https://pypi.org/project/mcp-for-blender/).*
-*Existing setups keep working; no config change is required. [Read more](https://github.com/ahujasid/mcp-for-blender/issues/366)*
+A personal fork of [MCP for Blender](https://github.com/ahujasid/mcp-for-blender), kept as a
+drop-in replacement for the official build: the package name (`mcp-for-blender`), the
+`mcp-for-blender` command and the Blender addon are all unchanged. The only difference is
+where `uv` reads the code from — this checkout instead of PyPI.
 
-**Disclaimer:** This is a third-party integration and not made by Blender
+**Disclaimer:** This is a third-party integration and not made by Blender.
 
 Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
-
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/blender-mcp)
-[![PyPI Version](https://img.shields.io/pypi/v/mcp-for-blender?color=blue)](https://pypi.org/project/mcp-for-blender/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/SNqPn4TcKQ)
-
-[**Website**](https://mcp-for-blender.com/) · [**Full Tutorial**](https://www.youtube.com/watch?v=lCyQ717DuzQ) · [**Discord**](https://discord.gg/SNqPn4TcKQ) · [**Sponsor**](https://github.com/sponsors/ahujasid) · [**Buy me a coffee**](https://buymeacoffee.com/ahujasid) · [**Feedback**](https://cal.com/siddharth-ahuja/feedback-call)
-
-<a href="https://trendshift.io/repositories/14834?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14834" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14834" alt="ahujasid%2Fblender-mcp | Trendshift" width="250" height="55"/></a>
-
-<br />
-
-**Supporters**
-
-[CodeRabbit](https://www.coderabbit.ai/)
-[Kevin Guanche Darias](https://github.com/KevinGuancheDarias)
-[Guillermo Rauch](https://github.com/rauchg)
-
-**All supporters:** [Support this project](https://github.com/sponsors/ahujasid)
 
 </div>
 
 ---
 
+## Installing this fork
+
+This fork is **not published to PyPI**, so the official `uvx mcp-for-blender` command would
+download the upstream build, not this code. Point `uv` at this checkout instead. Because the
+package still installs the same `mcp-for-blender` command, nothing else about your setup
+changes — it is a drop-in swap for the official build.
+
+**1. Install the command (recommended)**
+
+```bash
+uv tool install --editable /path/to/mcp-for-blender
+```
+
+The `--editable` flag makes edits in this checkout take effect without reinstalling; drop it
+for a frozen snapshot. This puts a `mcp-for-blender` executable on your PATH, so clients can
+call it directly instead of going through `uvx`:
+
+```json
+{
+    "mcpServers": {
+        "blender": { "command": "mcp-for-blender" }
+    }
+}
+```
+
+If your client is a GUI app that does not inherit your shell's PATH, give it the absolute
+path instead (`which mcp-for-blender`, or `where mcp-for-blender` on Windows).
+
+**2. Or run it straight from the checkout, with no install**
+
+```json
+{
+    "mcpServers": {
+        "blender": {
+            "command": "uvx",
+            "args": ["--from", "/path/to/mcp-for-blender", "mcp-for-blender"]
+        }
+    }
+}
+```
+
+The `--from` argument also accepts a git remote: `"git+https://github.com/<you>/mcp-for-blender"`.
+
+**3. Or install from your own git remote**
+
+```bash
+uv tool install git+https://github.com/<you>/mcp-for-blender
+```
+
+**4. Editable, without installing a command at all**
+
+```bash
+uv run --directory /path/to/mcp-for-blender mcp-for-blender
+```
+
+**Installing the Blender addon from this fork:**
+
+```bash
+uvx --from /path/to/mcp-for-blender mcp-for-blender install-addon
+# or, if you installed the command above:
+mcp-for-blender install-addon
+```
+
+> **Substitution rule.** Everywhere this README shows `uvx mcp-for-blender`, use
+> `mcp-for-blender` if you installed it as a tool (option 1), or
+> `uvx --from /path/to/mcp-for-blender mcp-for-blender` otherwise. Docker and the Blender
+> addon are unaffected.
+
+---
+
 ## Quickstart
 
-> **Note:** the PyPI package `blender-mcp` is now **`mcp-for-blender`**. Existing setups
-> keep working — `uvx blender-mcp` still runs the server and **no config change is
-> required**. New installs should use `mcp-for-blender`.
-> [What changed and why](https://github.com/ahujasid/mcp-for-blender/issues/366)
+> **Using this fork?** Start with [Installing this fork](#installing-this-fork) above. The
+> steps below otherwise follow upstream's official install — the only thing that changes
+> here is where `uv` gets the package from.
 
 Three steps: install `uv`, point your MCP client at the server, install the Blender addon.
 
@@ -68,7 +120,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
     "mcpServers": {
         "blender": {
             "command": "uvx",
-            "args": ["mcp-for-blender"]
+            "args": ["--from", "/path/to/mcp-for-blender", "mcp-for-blender"]
         }
     }
 }
@@ -79,7 +131,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 <summary><b>Claude Code</b></summary>
 
 ```bash
-claude mcp add blender uvx mcp-for-blender
+claude mcp add blender -- uvx --from /path/to/mcp-for-blender mcp-for-blender
 ```
 </details>
 
@@ -87,20 +139,20 @@ claude mcp add blender uvx mcp-for-blender
 <summary><b>Codex</b></summary>
 
 ```bash
-codex mcp add blender -- uvx mcp-for-blender
+codex mcp add blender -- uvx --from /path/to/mcp-for-blender mcp-for-blender
 ```
 </details>
 
 <details>
 <summary><b>Cursor / VS Code / OpenCode / Antigravity</b></summary>
 
-See [MCP Client Setup](#mcp-client-setup) below for per-client instructions and one-click install buttons.
+See [MCP Client Setup](#mcp-client-setup) below for per-client instructions.
 </details>
 
 **3. Install the Blender addon**
 
 ```bash
-uvx mcp-for-blender install-addon
+uvx --from /path/to/mcp-for-blender mcp-for-blender install-addon
 ```
 
 Then in Blender: **Edit → Preferences → Add-ons** → enable **Interface: MCP for Blender**.
@@ -115,6 +167,7 @@ In Blender's 3D viewport, press `N` → open the **MCP for Blender** tab → cli
 
 ## Table of Contents
 
+- [Installing this fork](#installing-this-fork)
 - [Quickstart](#quickstart)
 - [Features](#features)
 - [Components](#components)
@@ -143,11 +196,8 @@ In Blender's 3D viewport, press `N` → open the **MCP for Blender** tab → cli
 - [Troubleshooting](#troubleshooting)
 - [Technical Details](#technical-details)
 - [Limitations & Security Considerations](#limitations--security-considerations)
-- [Telemetry Control](#telemetry-control)
-- [Feedback](#feedback)
-- [Contributing](#contributing)
+- [Telemetry & Analytics](#telemetry--analytics)
 - [Disclaimer](#disclaimer)
-- [Star History](#star-history)
 
 ---
 
@@ -253,7 +303,7 @@ uv cache clean mcp-for-blender blender-mcp && uvx --refresh mcp-for-blender
 On locked-down machines you can skip uvx entirely with [`pipx`](https://pipx.pypa.io), then point your client at the installed command:
 
 ```bash
-pipx install mcp-for-blender
+pipx install /path/to/mcp-for-blender
 pipx ensurepath          # then restart your shell / client
 ```
 
@@ -351,6 +401,9 @@ By default, the AI can run any Python code in Blender. Set `BLENDER_MCP_SAFE_MOD
 
 ## MCP Client Setup
 
+> The snippets below use upstream's official `uvx mcp-for-blender`. To run this fork,
+> apply the [substitution rule](#installing-this-fork).
+
 ### Claude for Desktop
 
 [Watch the setup instruction video](https://www.youtube.com/watch?v=neoK_WMq92g) (assuming you have already installed uv)
@@ -413,8 +466,6 @@ env = { BLENDER_HOST = "localhost", BLENDER_PORT = "9876" }
 
 ### Cursor
 
-[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/link/mcp%2Finstall?name=blender&config=eyJjb21tYW5kIjoidXZ4IG1jcC1mb3ItYmxlbmRlciJ9)
-
 **macOS** — go to **Settings → MCP** and paste the following:
 
 - To use as a global server, use the *"add new global MCP server"* button and paste
@@ -458,7 +509,18 @@ env = { BLENDER_HOST = "localhost", BLENDER_PORT = "9876" }
 
 *Prerequisites*: Make sure you have [Visual Studio Code](https://code.visualstudio.com/) installed before proceeding.
 
-[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_mcp--for--blender_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](vscode:mcp/install?%7B%22name%22%3A%22blender-mcp%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22mcp-for-blender%22%5D%7D)
+Add this to `.vscode/mcp.json` in your workspace (or your user-level `mcp.json`):
+
+```json
+{
+    "servers": {
+        "blender": {
+            "command": "uvx",
+            "args": ["mcp-for-blender"]
+        }
+    }
+}
+```
 
 ### OpenCode
 
@@ -725,76 +787,25 @@ The system uses a simple JSON-based protocol over TCP sockets:
 - Poly Haven requires downloading models, textures, and HDRI images. If you do not want to use it, please turn it off in the checkbox in Blender.
 - Complex operations might need to be broken down into smaller steps.
 
-## Telemetry Control
+## Telemetry & Analytics
 
-Telemetry is **opt-in**. Collection of your content is off by default and stays off until you explicitly turn it on.
+**Removed in this fork.** The whole analytics stack is deleted — the Supabase telemetry
+client, the trajectory recorder, the first-run consent prompt, and their config module.
+There is no install ID, no UUID file written to disk, no background sender thread, no
+network calls, and no consent prompt. Nothing about your session leaves the machine.
 
-**What is collected by default (no opt-in):** a minimal anonymous usage record so I can count active users and see which tools get used — a randomly generated install ID, a session ID, the tool name, whether it succeeded, how long it took, the MCP for Blender and Blender versions, your operating system, and a timestamp.
+The `disable_telemetry` and `record_trajectory_feedback` tools are still listed, as no-ops,
+so existing client prompts that reference them still resolve. Their descriptions are marked
+DEPRECATED.
 
-**Never collected without opting in:** your prompts, generated code, viewport screenshots, scene data, and trajectory steps.
-
-**To opt in** — go to **Edit → Preferences → Add-ons → MCP for Blender** and check the telemetry consent checkbox. Some MCP clients will also offer you a one-time opt-in prompt at the start of a conversation. Opting in adds prompts, generated code, screenshots, and trajectory data to what's collected; see the TnC for details. You can turn it back off in the same place at any time.
-
-**To turn off telemetry entirely**, including the minimal anonymous usage record, set an environment variable:
-
-```bash
-DISABLE_TELEMETRY=true uvx mcp-for-blender
-```
-
-Or add it to your MCP config:
-
-```json
-{
-    "mcpServers": {
-        "blender": {
-            "command": "uvx",
-            "args": ["mcp-for-blender"],
-            "env": {
-                "DISABLE_TELEMETRY": "true"
-            }
-        }
-    }
-}
-```
-
-Telemetry data is not linked to your name or account. It may be used to improve MCP for Blender, for research, and to train AI models.
-
-Full detail on what is collected, and the license you grant by opting in, is in [TERMS_AND_CONDITIONS.md](TERMS_AND_CONDITIONS.md).
+If you want the upstream collection behaviour back, use the official
+[MCP for Blender](https://github.com/ahujasid/mcp-for-blender) build instead.
 
 ---
-
-## Feedback
-
-We are actively looking for feedback on MCP for Blender. If you have thoughts, share them [here](https://bit.ly/blender-mcp-form).
-
-If you have more detailed feedback, you can schedule a call with us [here](https://bit.ly/blender-mcp-call) — we will credit you in the project.
-
-### Join the Community
-
-Give feedback, get inspired, and build on top of the MCP: [**Discord**](https://discord.gg/SNqPn4TcKQ)
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Disclaimer
 
-This is a third-party integration and not made by Blender. Made by [Siddharth](https://x.com/sidahuj).
-
----
-
-## Star History
-
-<a href="https://star-history.com/#ahujasid/blender-mcp&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ahujasid/blender-mcp&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ahujasid/blender-mcp&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ahujasid/blender-mcp&type=Date" width="600" />
-  </picture>
-</a>
-
-<div align="center">
-
-**If MCP for Blender is useful to you, consider starring the repo**
-
-</div>
+This is a third-party integration and not made by Blender. Forked from the upstream
+[MCP for Blender](https://github.com/ahujasid/mcp-for-blender) project by Siddharth.
+`TERMS_AND_CONDITIONS.md` is the upstream telemetry agreement and no longer applies to this
+fork, which collects nothing.

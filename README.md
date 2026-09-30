@@ -93,6 +93,31 @@ mcp-for-blender install-addon
 > steps below otherwise follow upstream's official install — the only thing that changes
 > here is where `uv` gets the package from.
 
+**One command** sets up your AI apps and the Blender addon:
+
+**macOS / Linux**
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/ahujasid/mcp-for-blender/main/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ahujasid/mcp-for-blender/main/install.ps1 | iex"
+```
+
+Already have uv? Run `uvx mcp-for-blender setup` instead.
+
+It installs [uv](https://docs.astral.sh/uv/) if needed, finds the MCP clients on your machine (Claude Desktop, Claude Code, Codex, Cursor, VS Code, Devin Desktop/Windsurf, OpenCode, Antigravity), and lets you pick which to set up. Then it installs the Blender addon and enables it. Your existing config is kept: it only adds a `blender` entry and saves a `.bak` of each file it changes.
+
+Then **fully quit and reopen your AI app** (on Windows, quit it from the system tray), open Blender, and ask it to build something. The addon starts its server when Blender opens.
+
+> `setup --dry-run` shows what would change without changing anything; `--yes` skips the questions; `--skip-addon` leaves Blender alone.
+
+<details>
+<summary><b>Manual setup</b></summary>
+
 Three steps: install `uv`, point your MCP client at the server, install the Blender addon.
 
 **1. Install uv**
@@ -159,7 +184,9 @@ Then in Blender: **Edit → Preferences → Add-ons** → enable **Interface: MC
 
 **4. Connect**
 
-In Blender's 3D viewport, press `N` → open the **MCP for Blender** tab → click **Start MCP Server**. That's it — ask Claude to build something.
+The addon starts its server when Blender opens. To check, press `N` in the 3D viewport → open the **MCP for Blender** tab (click **Start MCP Server** if it isn't running). That's it — ask Claude to build something.
+
+</details>
 
 > **Note:** Only run **one** instance of the MCP server (either Cursor or Claude Desktop), not both.
 
@@ -524,18 +551,7 @@ env = { BLENDER_HOST = "localhost", BLENDER_PORT = "9876" }
 
 *Prerequisites*: Make sure you have [Visual Studio Code](https://code.visualstudio.com/) installed before proceeding.
 
-Add this to `.vscode/mcp.json` in your workspace (or your user-level `mcp.json`):
-
-```json
-{
-    "servers": {
-        "blender": {
-            "command": "uvx",
-            "args": ["mcp-for-blender"]
-        }
-    }
-}
-```
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_mcp--for--blender_server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=ffffff)](https://vscode.dev/redirect/mcp/install?name=blender&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22mcp-for-blender%22%5D%7D)
 
 ### OpenCode
 
@@ -575,6 +591,8 @@ Add this to `.vscode/mcp.json` in your workspace (or your user-level `mcp.json`)
 ---
 
 ## Installing the Blender Addon
+
+> `uvx mcp-for-blender setup` (see [Quickstart](#quickstart)) does all of this, including enabling the addon. The steps below are for doing it by hand.
 
 **1. Recommended** — from a terminal, run:
 

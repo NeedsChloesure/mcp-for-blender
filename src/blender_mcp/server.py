@@ -362,6 +362,11 @@ def _maybe_handshake_addon(blender: BlenderConnection) -> None:
         logger.debug(f"Addon handshake skipped: {e}")
 
 
+def _addon_protocol() -> int | None:
+    """Protocol the connected addon reported at handshake, or None if unknown."""
+    return _addon_handshake.protocol_version if _addon_handshake else None
+
+
 def get_blender_connection():
     """Get or create a persistent Blender connection"""
     global _blender_connection

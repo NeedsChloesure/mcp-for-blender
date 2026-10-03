@@ -1,0 +1,118 @@
+name: Upstream sync
+
+# Watches the upstream project for a new Python package version and opens a PR
+# that merges upstream's default branch into this fork for review. Upstream's
+# Premium and telemetry changes are NOT stripped automatically: the reviewer
+# drops those while resolving the PR.
+#
+# Needs "Allow GitHub Actions to create and approve pull requests" enabled in
+# the repository settings. Optionally set an UPSTREAM_SYNC_TOKEN secret (a PAT
+# with repo scope) so the PR can trigger CI and so pushes aren't attributed to
+# the built-in GITHUB_TOKEN.
+
+on:
+  schedule:
+    # Daily at 06:17 UTC. Off the hour on purpose; GitHub drops jobs scheduled
+    # exactly on the hour when load is high.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_REPO: ahujasid/blender-mcp
+  UPSTREAM_BRANCH: main
+  FORK_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+
+      - name: Compare upstream and fork versions
+        id: versions
+        run: |
+          set -euo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}:refs/remotes/upstream/${UPSTREAM_BRANCH}"
+          upstream="$(git show "upstream/${UPSTREAM_BRANCH}:pyproject.toml" | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
+          fork="$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          echo "fork=$fork" >> "$GITHUB_OUTPUT"
+          if [ "$upstream" = "$fork" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Fork already tracks upstream $fork; nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream is $upstream, fork is $fork."
+          fi
+
+      - name: Merge upstream onto a sync branch
+        if: steps.versions.outputs.changed == 'true'
+        id: merge
+        run: |
+          set -euo pipefail
+          branch="upstream-sync/${{ steps.versions.outputs.upstream }}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          if git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          else
+            # Keep the conflicted tree on the branch so the reviewer resolves it
+            # in the PR instead of the job failing.
+            git add -A
+            git commit --no-verify -m "Merge upstream ${UPSTREAM_BRANCH} (conflicts to resolve)"
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip when a PR for this version is already open
+        if: steps.versions.outputs.changed == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          found="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --head "${{ steps.merge.outputs.branch }}" --json number --jq 'length')"
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+          if [ "$found" != "0" ]; then
+            echo "A pull request for ${{ steps.merge.outputs.branch }} is already open; leaving it alone."
+          fi
+
+      - name: Push branch and open the PR
+        if: steps.versions.outputs.changed == 'true' && steps.existing.outputs.found == '0'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          branch="${{ steps.merge.outputs.branch }}"
+          git push --set-upstream origin "$branch"
+
+          if [ "${{ steps.merge.outputs.conflicts }}" = "true" ]; then
+            note=":warning: **This merge has conflicts** that were committed as-is. Resolve them in this PR."
+          else
+            note="This merge applied cleanly."
+          fi
+
+          body="Automated by the **Upstream sync** workflow.
+
+          Upstream ${UPSTREAM_REPO} moved to version ${{ steps.versions.outputs.upstream }}; this fork is on ${{ steps.versions.outputs.fork }}. This PR merges ${UPSTREAM_BRANCH} into ${FORK_BRANCH} for review.
+
+          ${note}
+
+          **Before merging:** drop upstream's Premium and telemetry changes per this fork's policy, and confirm the test suite passes."
+
+          gh pr create --repo "$GITHUB_REPOSITORY" --base "${FORK_BRANCH}" --head "$branch" --title "Upstream ${{ steps.versions.outputs.upstream }}" --body "$body"

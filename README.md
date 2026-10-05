@@ -13,6 +13,27 @@ where `uv` reads the code from — this checkout instead of PyPI.
 
 Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 
+<<<<<<< HEAD
+=======
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/blender-mcp)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/SNqPn4TcKQ)
+[![Website](https://img.shields.io/badge/Website-mcp--for--blender.com-black)](https://mcp-for-blender.com/)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ahujasid)
+[![PyPI Version](https://img.shields.io/pypi/v/mcp-for-blender?color=blue)](https://pypi.org/project/mcp-for-blender/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+<a href="https://trendshift.io/repositories/14834?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14834" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14834" alt="ahujasid%2Fblender-mcp | Trendshift" width="250" height="55"/></a>
+
+<br />
+
+**Supporters**
+
+[CodeRabbit](https://www.coderabbit.ai/)
+[Guillermo Rauch](https://github.com/rauchg)
+
+**All supporters:** [Support this project](https://github.com/sponsors/ahujasid)
+
+>>>>>>> upstream/main
 </div>
 
 ---
@@ -117,6 +138,30 @@ Then **fully quit and reopen your AI app** (on Windows, quit it from the system 
 <details>
 <summary><b>Manual setup, in case the automatic setup doesn't work</b></summary>
 
+**One command** sets up your AI apps and the Blender addon:
+
+**macOS / Linux**
+
+```bash
+curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"
+```
+
+Already have uv? Run `uvx mcp-for-blender setup` instead.
+
+It installs [uv](https://docs.astral.sh/uv/) if needed, finds the MCP clients on your machine (Claude Desktop, Claude Code, Codex, Cursor, VS Code, Devin Desktop/Windsurf, OpenCode, Antigravity), and lets you pick which to set up. Then it installs the Blender addon and enables it. Your existing config is kept: it only adds a `blender` entry and saves a `.bak` of each file it changes.
+
+Then **fully quit and reopen your AI app** (on Windows, quit it from the system tray), open Blender, and ask it to build something. The addon starts its server when Blender opens.
+
+
+<details>
+<summary><b>Manual setup, in case the automatic setup doesn't work</b></summary>
+
 Three steps: install `uv`, point your MCP client at the server, install the Blender addon.
 
 **1. Install uv**
@@ -196,6 +241,7 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 - [Installing this fork](#installing-this-fork)
 - [Quickstart](#quickstart)
 - [Features](#features)
+- [Premium](#premium)
 - [Components](#components)
 - [Installation](#installation)
   - [Automatic setup](#automatic-setup)
@@ -235,9 +281,13 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 | **Two-way communication** | Connect Claude AI to Blender through a socket-based server |
 | **Object manipulation** | Create, modify, and delete 3D objects in Blender |
 | **Material control** | Apply and modify materials and colors |
-| **Scene inspection** | Get detailed information about the current Blender scene |
-| **Code execution** | Run arbitrary Python code in Blender from Claude |
-| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Hyper3D Rodin and Hunyuan3D |
+| **Visual verification** | Multi-angle, camera, wireframe, X-ray and animation-strip views, plus renders, so the AI checks its own work |
+| **Code execution** | The AI writes Blender Python directly |
+| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Tripo, Hyper3D Rodin and Hunyuan3D |
+
+## Premium
+
+Generate AI 3D models (Hunyuan3D, Tripo, Hyper3D Rodin) straight into Blender without bringing your own API keys. [More details](https://www.mcp-for-blender.com/premium)
 
 ## Components
 
@@ -636,18 +686,23 @@ Then open the **MCP for Blender** tab in Blender's sidebar (press `N` in the 3D 
 
 > For newcomers, go straight to [Quickstart](#quickstart). For existing users, see below.
 
-**1.** Update the addon file by running:
+**1.** Run:
 
 ```bash
-uvx mcp-for-blender install-addon
-uvx mcp-for-blender addon-paths   # optional: list detected Blender addons folders
+uvx mcp-for-blender@latest update
 ```
 
-**2.** In Blender: **Preferences → Add-ons** → disable and re-enable **Interface: MCP for Blender** (or restart Blender), then click **Start MCP Server** again.
+This updates the MCP server (refreshing uv's cached copy, or upgrading a `uv tool install`) and every installed copy of the Blender addon, keeping a `.bak` of each file it replaces. It never downgrades an addon that's newer than the release, and leaves alone a copy you've edited locally. Add `--dry-run` to see what it would change first.
 
-**3.** Delete the MCP server from Claude and add it back again if the server package itself needs a refresh.
+> Use `@latest` the first time: releases older than 2.1.7 don't have the `update` command, and uvx may still have one of those cached.
 
-> **Note:** the MCP server never modifies your Blender addon files on its own. When it starts, it checks whether the installed addon is behind the bundled copy and logs how to update; `install-addon` is what actually writes, and it keeps a `.bak` of the file it replaces. Trajectory capture still works on older loaded addons via an `execute_code` fallback.
+**2.** Restart your MCP client (Claude Desktop, Cursor, ...) so it starts the new server.
+
+**3.** In Blender: restart it, or **Preferences → Add-ons** → disable and re-enable **Interface: MCP for Blender**, then click **Start MCP Server** again.
+
+If a client is still set up with the old `blender-mcp` package name, `update` says so; `uvx mcp-for-blender setup` switches it over.
+
+> **Note:** the MCP server never modifies your Blender addon files on its own. When it starts, it checks whether the installed addon is behind the bundled copy and logs how to update; `update` and `install-addon` are what actually write. Trajectory capture still works on older loaded addons via an `execute_code` fallback.
 
 ---
 
@@ -671,16 +726,17 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 ### Capabilities
 
-- Get scene and object information
-- Create, delete and modify shapes
-- Apply or create materials for objects
-- Execute any Python code in Blender
-- Export the scene, the selection or named objects to GLB/FBX for other applications (`export_scene`)
-- Look up node schemas and the bpy API reference instead of guessing socket order or enum names
-- Search and download free CC0 HDRIs, textures and models from [Poly Haven](https://polyhaven.com/)
-- Search and download models from [Sketchfab](https://sketchfab.com/)
-- Search and download low-poly models from [Poly Pizza](https://poly.pizza/)
-- AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/) and [Hunyuan3D](https://3d.hunyuan.tencent.com/)
+The AI writes Blender Python itself for modelling, layout, materials, animation, rigging and retopology. The MCP adds what Python can't do on its own, as nine tools:
+
+| Tool | What it's for |
+|---|---|
+| `execute_blender_code` | Run Python in your live Blender |
+| `look` | See the result from the `viewport`, `camera`, `angles` (auto-framed multi-view sheet, any direction) or `frames` (animation strip), drawn `solid`, `material`, `rendered`, `wireframe` or `xray`; or show a render or image file |
+| `get_scene_info` | Compact scene summary, one line per object with the fields you pick (placement, materials, topology, weights, ...); drill in with `root` or `query` |
+| `generate_3d` | One call to generate and import a model with Tripo, Hunyuan3D or Hyper3D Rodin. Premium generators are preferred automatically |
+| `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
+| `get_addon_status` | Blender version, addon version, and which libraries and generators are switched on |
+| `disable_telemetry`, `record_trajectory_feedback` | Data collection controls |
 
 #### Hunyuan3D on Tencent Cloud (Official API mode)
 
@@ -707,18 +763,15 @@ Worked example:
 
 > *"Light the scene with an overcast afternoon HDRI and put a rusty metal texture on the wall"*
 
-Claude calls `search_polyhaven_assets(query="overcast afternoon", asset_type="hdris")`,
+Claude calls `search_assets(source="polyhaven", query="overcast afternoon", asset_type="hdris")`,
 which understands the intent rather than matching keywords - "couch" finds sofas, and it
-works in any language. It can then check the thumbnail with
-`get_polyhaven_asset_preview(asset_id="...")` before spending the bandwidth, and import
-with `download_polyhaven_asset(...)`.
+works in any language. `previews=3` attaches thumbnails of the top results before spending
+the bandwidth, and `import_asset(source="polyhaven", id="...", asset_type="textures", apply_to=["Wall"])`
+downloads a texture and applies it in one call.
 
-`get_polyhaven_categories(asset_type="textures")` returns the category tree and every
-attribute that type can be filtered on, each with the values it accepts - weather and time
-of day for HDRIs, surface use and condition for textures, material and whether a model is
-rigged or ships level-of-detail variants. Pass a category path or those attributes to
-`search_polyhaven_assets`; matching on a category is inclusive, so a parent selects
-everything nested beneath it.
+Searches can also filter on a category path or on attributes such as weather and time of
+day for HDRIs, or surface use and condition for textures; an unknown attribute errors with
+the valid ones.
 
 Models are imported from the `.blend`, which is the file the artist authored - the glTF,
 FBX and USD versions are generated from it and lose material detail. Textures build a
@@ -751,9 +804,9 @@ Worked example:
 
 > *"Search Poly Pizza for a low-poly chair under a CC0 licence and import one at 1 metre tall"*
 
-Claude calls `search_polypizza_models(query="chair", licence="CC0")`, which returns each
+Claude calls `search_assets(source="polypizza", query="chair", licence="CC0")`, which returns each
 match with its licence and triangle count, then
-`download_polypizza_model(model_id="...", normalize_size=True, target_size=1.0)`.
+`import_asset(source="polypizza", id="...", target_size=1.0)`.
 
 You can also filter by category (`"Animals"`, `"Furniture & Decor"`, `"Transport"`,
 `"Nature"`, `"Buildings"`, `"People & Characters"`, `"Food & Drink"`, `"Weapons"`,

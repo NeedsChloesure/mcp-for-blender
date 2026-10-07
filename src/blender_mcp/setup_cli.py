@@ -462,7 +462,11 @@ def codex_state(env=None) -> ClientState:
 
 def _run_cli(args: list[str]) -> tuple[bool, str]:
     try:
+<<<<<<< HEAD
         proc = subprocess.run(args, capture_output=True, text=True, timeout=60)
+=======
+        proc = subprocess.run(args, capture_output=True, text=True, errors="replace", timeout=60)
+>>>>>>> upstream/main
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     output = (proc.stdout + proc.stderr).strip()
@@ -583,7 +587,11 @@ def find_blender_executables(platform: str | None = None, env=None, which=shutil
 
 def blender_version(executable: str) -> tuple[int, int] | None:
     try:
+<<<<<<< HEAD
         proc = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=60)
+=======
+        proc = subprocess.run([executable, "--version"], capture_output=True, text=True, errors="replace", timeout=60)
+>>>>>>> upstream/main
     except (OSError, subprocess.TimeoutExpired):
         return None
     match = _VERSION_RE.search(proc.stdout or "")
@@ -602,9 +610,17 @@ def blender_is_running(platform: str | None = None) -> bool:
     platform = platform or sys.platform
     try:
         if platform == "win32":
+<<<<<<< HEAD
             proc = subprocess.run(["tasklist", "/FI", "IMAGENAME eq blender.exe", "/NH"],
                                   capture_output=True, text=True, timeout=15)
             return "blender.exe" in proc.stdout.lower()
+=======
+            # tasklist writes the OEM code page (cp850 on German, cp857 on Turkish Windows), not the
+            # ANSI one text=True assumes; its localized "no tasks" message used to crash the decode.
+            proc = subprocess.run(["tasklist", "/FI", "IMAGENAME eq blender.exe", "/NH"],
+                                  capture_output=True, text=True, encoding="oem", errors="replace", timeout=15)
+            return "blender.exe" in (proc.stdout or "").lower()
+>>>>>>> upstream/main
         proc = subprocess.run(["pgrep", "-xi", "blender"], capture_output=True, text=True, timeout=15)
         return proc.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -638,7 +654,11 @@ def enable_addon_headless(executable: str, module: str) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             [executable, "--background", "--python-expr", _ENABLE_SCRIPT, "--", module],
+<<<<<<< HEAD
             capture_output=True, text=True, timeout=180, env=env,
+=======
+            capture_output=True, text=True, errors="replace", timeout=180, env=env,
+>>>>>>> upstream/main
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, f"Couldn't run Blender: {e}"

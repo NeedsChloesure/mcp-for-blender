@@ -22,3 +22,15 @@ scripts/
 
 # Legacy PyPI shim — built and published separately, see runbook
 legacy-shim/
+
+# Secrets: Premium keys live only as Edge Function secrets
+.env
+.env.*
+supabase/.env
+supabase/.temp/
+*.pem
+*.key
+.secrets/
+
+# Local eval harness (see evals/README.md)
+evals/

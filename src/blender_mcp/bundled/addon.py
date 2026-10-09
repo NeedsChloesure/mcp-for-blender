@@ -1517,7 +1517,6 @@ class BlenderMCPServer:
             "get_sketchfab_status": self.get_sketchfab_status,
             "get_polypizza_status": self.get_polypizza_status,
             "get_hunyuan3d_status": self.get_hunyuan3d_status,
-            "get_tripo_status": premium_tripo_status,
             "export_scene": self.export_scene,
         }
 
@@ -1567,9 +1566,6 @@ class BlenderMCPServer:
             }
             handlers.update(hunyuan_handlers)
 
-        # Tripo is only offered through Premium
-        handlers.update(premium_tripo_handlers())
-
         handler = handlers.get(cmd_type)
         if handler:
             try:
@@ -1608,7 +1604,6 @@ class BlenderMCPServer:
                 "set_telemetry_consent",
             ]),
             "blender_version": bpy.app.version_string,
-            "premium_generators": premium_enabled_generators(),
         }
 
     def get_scene_info(self):
@@ -3448,8 +3443,6 @@ class BlenderMCPServer:
     #region Hyper3D
     def get_hyper3d_status(self):
         """Get the current status of Hyper3D Rodin integration"""
-        if premium_active():
-            return premium_integration_status("hyper3d", bpy.context.scene.blendermcp_use_hyper3d)
         enabled = bpy.context.scene.blendermcp_use_hyper3d
         hyper3d_api_key = self._get_hyper3d_api_key()
         if enabled:
@@ -3479,8 +3472,6 @@ class BlenderMCPServer:
             }
 
     def create_rodin_job(self, *args, **kwargs):
-        if premium_active():
-            return premium_create_rodin_job(*args, **kwargs)
         match bpy.context.scene.blendermcp_hyper3d_mode:
             case "MAIN_SITE":
                 return self.create_rodin_job_main_site(*args, **kwargs)
@@ -3517,8 +3508,7 @@ class BlenderMCPServer:
                 headers={
                     "Authorization": f"Bearer {api_key}",
                 },
-                files=files,
-                timeout=60,
+                files=files
             )
             data = response.json()
             return data
@@ -3550,8 +3540,7 @@ class BlenderMCPServer:
                     "Authorization": f"Key {api_key}",
                     "Content-Type": "application/json",
                 },
-                json=req_data,
-                timeout=60,
+                json=req_data
             )
             data = response.json()
             return data
@@ -3559,8 +3548,6 @@ class BlenderMCPServer:
             return {"error": str(e)}
 
     def poll_rodin_job_status(self, *args, **kwargs):
-        if premium_active():
-            return premium_poll_fal_job(kwargs.get("request_id") or kwargs.get("subscription_key"))
         match bpy.context.scene.blendermcp_hyper3d_mode:
             case "MAIN_SITE":
                 return self.poll_rodin_job_status_main_site(*args, **kwargs)
@@ -3582,7 +3569,6 @@ class BlenderMCPServer:
             json={
                 "subscription_key": subscription_key,
             },
-            timeout=30,
         )
         data = response.json()
         return {
@@ -3599,7 +3585,6 @@ class BlenderMCPServer:
             headers={
                 "Authorization": f"KEY {api_key}",
             },
-            timeout=30,
         )
         data = response.json()
         return data
@@ -3672,8 +3657,6 @@ class BlenderMCPServer:
         return mesh_obj
 
     def import_generated_asset(self, *args, **kwargs):
-        if premium_active():
-            return premium_import_job(kwargs.get("request_id") or kwargs.get("task_uuid"), kwargs.get("name"))
         match bpy.context.scene.blendermcp_hyper3d_mode:
             case "MAIN_SITE":
                 return self.import_generated_asset_main_site(*args, **kwargs)
@@ -3694,8 +3677,7 @@ class BlenderMCPServer:
             },
             json={
                 'task_uuid': task_uuid
-            },
-            timeout=30,
+            }
         )
         data_ = response.json()
         temp_file = None
@@ -3709,7 +3691,7 @@ class BlenderMCPServer:
 
                 try:
                     # Download the content
-                    response = requests.get(i["url"], stream=True, timeout=120)
+                    response = requests.get(i["url"], stream=True)
                     response.raise_for_status()  # Raise an exception for HTTP errors
 
                     # Write the content to the temporary file
@@ -3761,8 +3743,7 @@ class BlenderMCPServer:
             f"https://queue.fal.run/fal-ai/hyper3d/requests/{request_id}",
             headers={
                 "Authorization": f"Key {api_key}",
-            },
-            timeout=30,
+            }
         )
         data_ = response.json()
         temp_file = None
@@ -3775,7 +3756,7 @@ class BlenderMCPServer:
 
         try:
             # Download the content
-            response = requests.get(data_["model_mesh"]["url"], stream=True, timeout=120)
+            response = requests.get(data_["model_mesh"]["url"], stream=True)
             response.raise_for_status()  # Raise an exception for HTTP errors
 
             # Write the content to the temporary file
@@ -4576,8 +4557,6 @@ class BlenderMCPServer:
     #region Hunyuan3D
     def get_hunyuan3d_status(self):
         """Get the current status of Hunyuan3D integration"""
-        if premium_active():
-            return premium_integration_status("hunyuan3d", bpy.context.scene.blendermcp_use_hunyuan3d)
         enabled = bpy.context.scene.blendermcp_use_hunyuan3d
         hunyuan3d_mode = bpy.context.scene.blendermcp_hunyuan3d_mode
         secret_id = self._get_hunyuan3d_secret_id()
@@ -4706,10 +4685,7 @@ class BlenderMCPServer:
 
         return headers, endpoint
 
-    def create_hunyuan_job(self, *args, quality=None, **kwargs):
-        # quality is Premium-only; your own Tencent key has no such option.
-        if premium_active():
-            return premium_create_hunyuan_job(*args, quality=quality, **kwargs)
+    def create_hunyuan_job(self, *args, **kwargs):
         match bpy.context.scene.blendermcp_hunyuan3d_mode:
             case "OFFICIAL_API":
                 return self.create_hunyuan_job_main_site(*args, **kwargs)
@@ -4776,8 +4752,7 @@ class BlenderMCPServer:
             response = requests.post(
                 endpoint,
                 headers = headers,
-                data = json.dumps(data),
-                timeout=30,
+                data = json.dumps(data)
             )
 
             if response.status_code == 200:
@@ -4821,7 +4796,7 @@ class BlenderMCPServer:
             if image:
                 if re.match(r'^https?://', image, re.IGNORECASE) is not None:
                     try:
-                        resImg = requests.get(image, timeout=30)
+                        resImg = requests.get(image)
                         resImg.raise_for_status()
                         image_base64 = base64.b64encode(resImg.content).decode("ascii")
                         data["image"] = image_base64
@@ -4836,11 +4811,9 @@ class BlenderMCPServer:
                     except Exception as e:
                         return {"error": f"Image encoding failed: {str(e)}"}
 
-            # The local server generates synchronously, so allow it minutes to reply.
             response = requests.post(
                 f"{base_url}/generate",
                 json = data,
-                timeout=(10, 600),
             )
 
             if response.status_code != 200:
@@ -4871,8 +4844,6 @@ class BlenderMCPServer:
         
     
     def poll_hunyuan_job_status(self, *args, **kwargs):
-        if premium_active():
-            return premium_poll_hunyuan_job_status(*args, **kwargs)
         return self.poll_hunyuan_job_status_ai(*args, **kwargs)
     
     def poll_hunyuan_job_status_ai(self, job_id: str):
@@ -4910,8 +4881,7 @@ class BlenderMCPServer:
             response = requests.post(
                 endpoint,
                 headers=headers,
-                data=json.dumps(data),
-                timeout=30,
+                data=json.dumps(data)
             )
 
             if response.status_code == 200:
@@ -4923,41 +4893,8 @@ class BlenderMCPServer:
             return {"error": str(e)}
 
     def import_generated_asset_hunyuan(self, *args, **kwargs):
-        if premium_active():
-            return premium_import_generated_asset_hunyuan(*args, **kwargs)
         return self.import_generated_asset_hunyuan_ai(*args, **kwargs)
             
-    def _import_hunyuan_glb(self, name: str, glb_url: str):
-        temp_dir = tempfile.mkdtemp(prefix="hunyuan_glb_")
-        glb_path = osp.join(temp_dir, "model.glb")
-        try:
-            glb_response = requests.get(glb_url, stream=True, timeout=120)
-            glb_response.raise_for_status()
-            with open(glb_path, "wb") as f:
-                for chunk in glb_response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            bpy.ops.import_scene.gltf(filepath=glb_path)
-            imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
-            if not imported_objs:
-                return {"succeed": False, "error": "No mesh objects imported from GLB"}
-            obj = imported_objs[0]
-            if name:
-                obj.name = name
-            result = {
-                "name": obj.name, "type": obj.type,
-                "location": [obj.location.x, obj.location.y, obj.location.z],
-                "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
-                "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
-            }
-            if obj.type == "MESH":
-                result["world_bounding_box"] = self._get_aabb(obj)
-            return {"succeed": True, **result}
-        except Exception as e:
-            return {"succeed": False, "error": str(e)}
-        finally:
-            with suppress(Exception):
-                shutil.rmtree(temp_dir)
-
     def import_generated_asset_hunyuan_ai(self, name: str, zip_file_url: str):
         if not zip_file_url:
             return {"error": "No file URL provided"}
@@ -4969,14 +4906,42 @@ class BlenderMCPServer:
         # Prefer GLB (self-contained with materials) over OBJ/ZIP (API 3.0 returns .glb URLs)
         url_path = zip_file_url.split('?', 1)[0].split('#', 1)[0].lower()
         if url_path.endswith('.glb'):
-            return self._import_hunyuan_glb(name, zip_file_url)
+            temp_dir = tempfile.mkdtemp(prefix="hunyuan_glb_")
+            glb_path = osp.join(temp_dir, "model.glb")
+            try:
+                glb_response = requests.get(zip_file_url, stream=True)
+                glb_response.raise_for_status()
+                with open(glb_path, "wb") as f:
+                    for chunk in glb_response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                bpy.ops.import_scene.gltf(filepath=glb_path)
+                imported_objs = [obj for obj in bpy.context.selected_objects if obj.type == 'MESH']
+                if not imported_objs:
+                    return {"succeed": False, "error": "No mesh objects imported from GLB"}
+                obj = imported_objs[0]
+                if name:
+                    obj.name = name
+                result = {
+                    "name": obj.name, "type": obj.type,
+                    "location": [obj.location.x, obj.location.y, obj.location.z],
+                    "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                    "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+                }
+                if obj.type == "MESH":
+                    result["world_bounding_box"] = self._get_aabb(obj)
+                return {"succeed": True, **result}
+            except Exception as e:
+                return {"succeed": False, "error": str(e)}
+            finally:
+                with suppress(Exception):
+                    shutil.rmtree(temp_dir)
 
         # Fallback: ZIP/OBJ import (legacy)
         temp_dir = tempfile.mkdtemp(prefix="tencent_obj_")
         zip_file_path = osp.join(temp_dir, "model.zip")
         obj_file_path = osp.join(temp_dir, "model.obj")
         try:
-            zip_response = requests.get(zip_file_url, stream=True, timeout=120)
+            zip_response = requests.get(zip_file_url, stream=True)
             zip_response.raise_for_status()
             with open(zip_file_path, "wb") as f:
                 for chunk in zip_response.iter_content(chunk_size=8192):
@@ -5030,686 +4995,6 @@ class BlenderMCPServer:
                 shutil.rmtree(temp_dir)
     #endregion
 
-#region Premium
-# Premium is a different key, not a different set of tools. With the Premium
-# toggle on, the Hyper3D and Hunyuan3D commands send the same request through
-# the MCP for Blender server, which holds the fal key and decides quotas, and
-# replies are reshaped into the fal/Tencent shapes the MCP tools already
-# parse. Tripo is only offered through Premium. With generation_source left at
-# BYOK nothing here runs, and nothing here touches the network until the user
-# activates a key.
-
-# --- importing a finished job's files
-# Files keep their own names, because an OBJ finds its MTL and the MTL finds
-# its texture by name.
-
-MODEL_DOWNLOAD_TIMEOUT = 120
-
-
-def _safe_file_name(name, fallback):
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", osp.basename(str(name or "")))
-    return name if name.strip(".") else fallback
-
-
-def _match_texture_names(directory):
-    """If a texture arrived without its file name, save it under the one name
-    the MTL is still missing."""
-    names = os.listdir(directory)
-    referenced = set()
-    for name in names:
-        if name.lower().endswith(".mtl"):
-            with open(osp.join(directory, name), encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 2 and (parts[0].lower().startswith("map_") or parts[0].lower() == "bump"):
-                        referenced.add(osp.basename(parts[-1].replace("\\", "/")))
-    missing = [name for name in referenced if name not in names]
-    spare = [name for name in names if name.lower().endswith((".png", ".jpg", ".jpeg")) and name not in referenced]
-    if len(missing) == 1 and len(spare) == 1 and _safe_file_name(missing[0], "") == missing[0]:
-        shutil.copyfile(osp.join(directory, spare[0]), osp.join(directory, missing[0]))
-
-
-def _download_model_files(files, directory):
-    """files: [{role, format, url, file_name}]. Returns (model path, format)."""
-    model = None
-    used = set()
-    for index, file in enumerate(files):
-        url = str(file.get("url") or "")
-        if not re.match(r"^https?://", url, re.IGNORECASE):
-            raise ValueError("Invalid model file URL.")
-        fmt = str(file.get("format") or "").lower()
-        name = _safe_file_name(file.get("file_name"), f"{file.get('role') or 'file'}.{fmt or 'bin'}")
-        if name in used:
-            name = f"{index}_{name}"
-        used.add(name)
-        path = osp.join(directory, name)
-        response = requests.get(url, stream=True, timeout=MODEL_DOWNLOAD_TIMEOUT)
-        response.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        if file.get("role") == "model" and model is None:
-            model = (path, fmt or osp.splitext(name)[1].lstrip(".").lower())
-    if model is None:
-        raise ValueError("No model file to import.")
-    _match_texture_names(directory)
-    return model
-
-
-def _import_mesh_file(path, fmt, name):
-    existing_objects = set(bpy.data.objects)
-    existing_images = set(bpy.data.images)
-    if fmt == "obj":
-        if bpy.app.version >= (4, 0, 0):
-            bpy.ops.wm.obj_import(filepath=path)
-        else:
-            bpy.ops.import_scene.obj(filepath=path)
-    else:
-        bpy.ops.import_scene.gltf(filepath=path)
-    # The download folder is deleted after import, so embed any texture the
-    # OBJ importer loaded from it. glTF textures are packed already.
-    for image in set(bpy.data.images) - existing_images:
-        with suppress(Exception):
-            if image.filepath and not image.packed_file:
-                image.pack()
-    imported = set(bpy.data.objects) - existing_objects
-    meshes = [obj for obj in imported if obj.type == "MESH"]
-    if not meshes:
-        raise ValueError("No mesh objects were imported.")
-    obj = max(meshes, key=lambda o: len(o.data.vertices))
-    # glTF wraps the mesh in an empty; drop it so the mesh is the object Claude moves.
-    parent = obj.parent
-    if parent is not None and parent in imported and parent.type == "EMPTY" and len(parent.children) == 1:
-        matrix = obj.matrix_world.copy()
-        obj.parent = None
-        obj.matrix_world = matrix
-        bpy.data.objects.remove(parent)
-    if name:
-        obj.name = name
-        with suppress(Exception):
-            obj.data.name = name
-    return obj
-
-
-def import_model_files(files, name):
-    """Download and import; returns the importers' usual reply shape."""
-    temp_dir = tempfile.mkdtemp(prefix="blendermcp_model_")
-    try:
-        path, fmt = _download_model_files(files, temp_dir)
-        obj = _import_mesh_file(path, fmt, name)
-        return {
-            "succeed": True,
-            "name": obj.name,
-            "type": obj.type,
-            "location": [obj.location.x, obj.location.y, obj.location.z],
-            "rotation": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
-            "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
-            "world_bounding_box": BlenderMCPServer._get_aabb(obj),
-        }
-    except Exception as e:
-        return {"succeed": False, "error": str(e)}
-    finally:
-        with suppress(Exception):
-            shutil.rmtree(temp_dir)
-
-
-# Overridden by BLENDERMCP_PREMIUM_API_URL, so forks can point at their own
-# Supabase project without editing code.
-PREMIUM_API_URL_DEFAULT = "https://dbunjhuejdwwcafedslw.supabase.co/functions/v1/premium"
-PREMIUM_PRICING_URL = "https://mcp-for-blender.com/premium"
-PREMIUM_MANAGE_URL_DEFAULT = "https://mcp-for-blender.com/account"
-PREMIUM_TIMEOUT = 30
-PREMIUM_MAX_IMAGE_BYTES = 8 * 1024 * 1024  # fal's image-to-3D input limit
-
-# Fallback wording for codes the addon raises itself or that arrive without a
-# message. The server's message wins when it sends one.
-PREMIUM_ERROR_MESSAGES = {
-    "INVALID_KEY": "License key not recognised. Check it in Preferences, or switch to your own API keys.",
-    "NOT_ACTIVATED": "This device isn't activated. Click Activate in Preferences.",
-    "ACTIVATION_LIMIT": "Key is active on 3 devices. Deactivate one from its Blender Preferences.",
-    "NO_ACTIVE_SUBSCRIPTION": "Your Premium subscription isn't active. Manage it at the account link.",
-    "NOT_IN_PLAN": "High-quality models are included in Pro. Use standard quality, or upgrade.",
-    "QUOTA_EXHAUSTED": "You've used all generations this month. Upgrade for more.",
-    "TOO_MANY_IN_FLIGHT": "Wait for the current generation to finish, then try again.",
-    "SERVICE_PAUSED": "Premium generation is paused briefly. Your own API keys still work.",
-    "PROVIDER_ERROR": "The model provider failed. This attempt wasn't counted; try again.",
-    "ADDON_OUTDATED": "Update the addon to keep using Premium.",
-    "NETWORK_ERROR": "Couldn't reach the Premium server. Your own API keys still work.",
-    "BAD_RESPONSE": "The Premium server sent an unexpected reply. Try again shortly.",
-}
-
-# The scene checkboxes that turn each generator on, in both modes.
-PREMIUM_INTEGRATIONS = {
-    "hyper3d": ("Hyper3D Rodin", "blendermcp_use_hyper3d"),
-    "hunyuan3d": ("Hunyuan3D", "blendermcp_use_hunyuan3d"),
-    "tripo": ("Tripo", "blendermcp_use_tripo"),
-}
-
-# Last usage summary the server sent. draw() reads only this, never the network.
-_premium_status = {}
-# Hunyuan's import tool takes a URL, but an OBJ result is three files, so
-# remember each finished job's full file list by its model URL.
-_premium_files_by_url = {}
-
-
-def _premium_prefs():
-    try:
-        return get_blendermcp_addon_preferences()
-    except Exception:
-        return None
-
-
-def _premium_setting(pref_attr, env_var):
-    prefs = _premium_prefs()
-    value = getattr(prefs, pref_attr, "") if prefs else ""
-    return value or os.getenv(env_var, "")
-
-
-def premium_license_key():
-    return _premium_setting("premium_license_key", "BLENDERMCP_PREMIUM_LICENSE_KEY").strip()
-
-
-def premium_instance_id():
-    return _premium_setting("premium_instance_id", "BLENDERMCP_PREMIUM_INSTANCE_ID").strip()
-
-
-def premium_api_url():
-    return (os.getenv("BLENDERMCP_PREMIUM_API_URL") or PREMIUM_API_URL_DEFAULT).rstrip("/")
-
-
-def premium_active():
-    """Premium replaces the user's own keys when selected in Preferences, or
-    for headless runs that supply a license key by env var."""
-    prefs = _premium_prefs()
-    if prefs is not None and getattr(prefs, "generation_source", "BYOK") == "PREMIUM":
-        return True
-    return bool(os.getenv("BLENDERMCP_PREMIUM_LICENSE_KEY"))
-
-
-def premium_enabled_generators():
-    """Generators the user can call through Premium right now, for the
-    handshake. Reads local settings only, never the network."""
-    try:
-        if not premium_active():
-            return []
-        scene = bpy.context.scene
-        return [name for name, (_label, prop) in PREMIUM_INTEGRATIONS.items()
-                if getattr(scene, prop, False)]
-    except Exception:
-        return []
-
-
-def premium_error(code, message=None):
-    message = message or PREMIUM_ERROR_MESSAGES.get(code, code)
-    return {"error": message, "code": code, "message": message}
-
-
-def _premium_tag_redraw():
-    try:
-        for window in bpy.context.window_manager.windows:
-            for area in window.screen.areas:
-                if area.type in {"VIEW_3D", "PREFERENCES"}:
-                    area.tag_redraw()
-    except Exception:
-        pass
-
-
-def _premium_remember_usage(data):
-    usage = data.get("usage") if isinstance(data, dict) else None
-    if isinstance(usage, dict):
-        _premium_status.clear()
-        _premium_status.update(usage)
-        _premium_tag_redraw()
-
-
-def premium_request(method, path, payload=None, auth=True):
-    """Send one request to the Premium server. Never raises: transport
-    failures and non-JSON replies come back as {error, code, message}."""
-    headers = {
-        "X-Addon-Version": ".".join(str(part) for part in bl_info["version"]),
-        "X-Addon-Protocol": str(ADDON_PROTOCOL_VERSION),
-    }
-    if auth:
-        key = premium_license_key()
-        if not key:
-            return premium_error("INVALID_KEY", "No Premium license key set. Paste it in Preferences, or switch to your own API keys.")
-        instance_id = premium_instance_id()
-        if not instance_id:
-            return premium_error("NOT_ACTIVATED")
-        headers["Authorization"] = f"Bearer {key}"
-        headers["X-Instance-Id"] = instance_id
-    try:
-        response = requests.request(
-            method, premium_api_url() + path, headers=headers, json=payload, timeout=PREMIUM_TIMEOUT,
-        )
-    except Exception as e:
-        return premium_error("NETWORK_ERROR", f"{PREMIUM_ERROR_MESSAGES['NETWORK_ERROR']} ({e})")
-    try:
-        data = response.json()
-    except Exception:
-        data = None
-    if not isinstance(data, dict):
-        return premium_error("BAD_RESPONSE", f"{PREMIUM_ERROR_MESSAGES['BAD_RESPONSE']} (HTTP {response.status_code})")
-    _premium_remember_usage(data)
-    if response.status_code >= 400 or data.get("code"):
-        code = data.get("code") or "BAD_RESPONSE"
-        return premium_error(code, data.get("message"))
-    return data
-
-
-def _premium_format_date(value):
-    try:
-        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return f"{moment.strftime('%b')} {moment.day}"
-
-
-def _premium_remaining(status, pool):
-    counts = status.get(pool) or {}
-    return int(counts.get("remaining", max(0, counts.get("total", 0) - counts.get("used", 0))))
-
-
-def premium_short_status():
-    """One line for the sidebar, from the cache only. The cache is empty after
-    a restart until the next request, which isn't the same as no plan."""
-    if not premium_instance_id():
-        return "Premium: not activated"
-    if not _premium_status:
-        return "Premium: activated"
-    if not _premium_status.get("tier"):
-        return "Premium: subscription not active"
-    return (f"Premium: {str(_premium_status['tier']).title()}, "
-            f"{_premium_remaining(_premium_status, 'standard')} + "
-            f"{_premium_remaining(_premium_status, 'premium')} left")
-
-
-def premium_summary(status=None):
-    status = _premium_status if status is None else status
-    tier = status.get("tier")
-    if not tier:
-        return "Premium: no active subscription."
-    text = (f"Premium ({str(tier).title()}): {_premium_remaining(status, 'standard')} standard and "
-            f"{_premium_remaining(status, 'premium')} high-quality generations left")
-    reset = _premium_format_date(status.get("resets_at"))
-    return f"{text}, resets {reset}" if reset else text
-
-
-def _premium_high_locked():
-    """True once the server has said this plan has no high-quality allowance."""
-    return bool(_premium_status.get("tier")) and (_premium_status.get("premium") or {}).get("total", 0) == 0
-
-
-def premium_default_quality():
-    prefs = _premium_prefs()
-    value = getattr(prefs, "premium_default_quality", "standard") if prefs else "standard"
-    if value not in ("standard", "high") or (value == "high" and _premium_high_locked()):
-        return "standard"
-    return value
-
-
-def _premium_quality(model, quality, from_image):
-    """An explicit quality wins. Otherwise Rodin, and Tripo from an image, use
-    high (their only option), and everything else the user's default."""
-    if quality:
-        return quality
-    if model == "rodin" or (model == "tripo" and from_image):
-        return "high"
-    return premium_default_quality()
-
-
-def premium_integration_status(integration, enabled):
-    """Reply for get_hyper3d_status / get_hunyuan3d_status / get_tripo_status."""
-    label, prop = PREMIUM_INTEGRATIONS[integration]
-    if not enabled:
-        return {"enabled": False, "mode": "PREMIUM", "message": (
-            f"{label} is turned off. To use it through Premium, check '{label}' in the MCP for Blender "
-            "sidebar (press N in the 3D Viewport).")}
-    result = premium_request("GET", "/status")
-    if result.get("code") in {"NETWORK_ERROR", "BAD_RESPONSE"} and _premium_status.get("tier"):
-        summary = premium_summary() + " (cached; the Premium server is unreachable right now)"
-    elif result.get("code"):
-        return {"enabled": False, "mode": "PREMIUM", "message": result["message"]}
-    else:
-        summary = premium_summary()
-    quality = (f"Default quality: {premium_default_quality()}. Pass quality='high' only when the user asks "
-               "for more detail; it uses a high-quality generation.")
-    flow = {
-        "hyper3d": ("Mode: PREMIUM. Behaves like FAL_AI mode: pass request_id to poll_rodin_job_status and "
-                    "import_generated_asset. Every Rodin generation counts as high-quality."),
-        "hunyuan3d": ("Mode: PREMIUM. Follow the OFFICIAL_API flow: generate_hunyuan3d_model, then "
-                      "poll_hunyuan_job_status, then import_generated_asset_hunyuan with the ResultFile3Ds URL. "
-                      + quality),
-        "tripo": "Mode: PREMIUM. From an image, Tripo is high-quality only. " + quality,
-    }[integration]
-    return {"enabled": True, "mode": "PREMIUM", "message": f"{summary}. {flow}"}
-
-
-def _premium_image_payload(image):
-    """URLs go to the server as-is; local files are read here, since the
-    server cannot see the user's disk."""
-    if isinstance(image, (tuple, list)) and len(image) == 2:
-        suffix, encoded = image
-        raw = base64.b64decode(encoded) if isinstance(encoded, str) else encoded
-        return {"image_base64": base64.b64encode(raw).decode("ascii"),
-                "image_mime": _premium_mime(suffix)}, len(raw)
-    if re.match(r'^https?://', str(image), re.IGNORECASE):
-        return {"image_url": image}, 0
-    with open(image, "rb") as f:
-        raw = f.read()
-    return {"image_base64": base64.b64encode(raw).decode("ascii"),
-            "image_mime": _premium_mime(osp.splitext(image)[1])}, len(raw)
-
-
-def _premium_mime(suffix):
-    suffix = str(suffix or "").lower().lstrip(".")
-    return {"jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(suffix, "image/png")
-
-
-def premium_create_job(model, quality="standard", text_prompt=None, image=None, bbox_condition=None):
-    if bool(text_prompt) == bool(image):
-        return {"error": "Give exactly one of a text prompt or an image."}
-    if text_prompt and len(text_prompt) > 1024:
-        return {"error": "Prompt exceeds 1024 characters limit"}
-    if quality not in ("standard", "high"):
-        return {"error": "quality must be 'standard' or 'high'"}
-    payload = {"client_request_id": str(uuid.uuid4()), "operation": "generate",
-               "model": model, "quality": quality}
-    if text_prompt:
-        payload["prompt"] = text_prompt
-    else:
-        try:
-            image_fields, size = _premium_image_payload(image)
-        except Exception as e:
-            return {"error": f"Image encoding failed: {e}"}
-        if size > PREMIUM_MAX_IMAGE_BYTES:
-            return {"error": "Image is larger than 8 MB; use a smaller image or an image URL."}
-        payload.update(image_fields)
-    if bbox_condition:
-        payload["bbox_condition"] = bbox_condition
-    result = premium_request("POST", "/jobs", payload)
-    if result.get("code") == "NETWORK_ERROR":
-        # The first attempt may have reached the server; the same
-        # client_request_id returns that job instead of charging again.
-        result = premium_request("POST", "/jobs", payload)
-    return result
-
-
-def _premium_job(job_id):
-    return premium_request("GET", f"/jobs/{quote(str(job_id), safe='')}")
-
-
-def _premium_job_files(job):
-    files = job.get("files")
-    if not files and job.get("result_url"):
-        # Jobs finished before the server sent file lists were always one GLB.
-        files = [{"role": "model", "format": "glb", "url": job["result_url"], "file_name": "model.glb"}]
-    return files or None
-
-
-def premium_import_job(request_id, name):
-    if not request_id:
-        return {"succeed": False, "error": "request_id is required"}
-    job = _premium_job(request_id)
-    if job.get("code"):
-        return {"succeed": False, **job}
-    files = _premium_job_files(job)
-    if job.get("status") != "succeeded" or not files:
-        return {"succeed": False, "error": "Generation isn't finished yet. Poll until COMPLETED, then import."}
-    return import_model_files(files, name)
-
-
-# Rodin and Tripo: fal-style shapes, so the tools treat Premium like fal mode.
-
-_PREMIUM_FAL_STATUS = {"reserved": "IN_QUEUE", "succeeded": "COMPLETED", "failed": "FAILED"}
-
-
-def premium_poll_fal_job(request_id):
-    if not request_id:
-        return {"error": "request_id is required"}
-    job = _premium_job(request_id)
-    if job.get("code") or "status" not in job:
-        return job
-    status = _PREMIUM_FAL_STATUS.get(job["status"])
-    if status is None:
-        status = "IN_QUEUE" if job.get("provider_status") == "IN_QUEUE" else "IN_PROGRESS"
-    reply = {"status": status}
-    if status == "FAILED":
-        reply["error"] = (job.get("error") or "Generation failed") + ". This attempt wasn't counted."
-    return reply
-
-
-def _premium_fal_reply(result, note=None):
-    if not result.get("job_id"):
-        return result
-    reply = {"request_id": result["job_id"], "status": "IN_QUEUE", "message": premium_summary()}
-    if note:
-        reply["note"] = note
-    return reply
-
-
-def premium_create_rodin_job(text_prompt=None, images=None, bbox_condition=None):
-    image = images[0] if images else None
-    result = premium_create_job("rodin", "high", text_prompt=text_prompt, image=image,
-                                bbox_condition=bbox_condition)
-    return _premium_fal_reply(result, "Premium uses the first image only." if images and len(images) > 1 else None)
-
-
-def premium_create_tripo_job(text_prompt=None, image=None, quality=None):
-    quality = _premium_quality("tripo", quality, bool(image))
-    return _premium_fal_reply(premium_create_job("tripo", quality, text_prompt=text_prompt, image=image))
-
-
-def premium_tripo_status():
-    enabled = bool(getattr(bpy.context.scene, "blendermcp_use_tripo", False))
-    if premium_active():
-        return premium_integration_status("tripo", enabled)
-    return {"enabled": False, "message": "Tripo is only available with MCP for Blender Premium."}
-
-
-def premium_tripo_handlers():
-    """Tripo commands, registered in Premium mode when its checkbox is on."""
-    if not (premium_active() and getattr(bpy.context.scene, "blendermcp_use_tripo", False)):
-        return {}
-    return {
-        "create_tripo_job": premium_create_tripo_job,
-        "poll_tripo_job_status": premium_poll_fal_job,
-        "import_generated_asset_tripo": premium_import_job,
-    }
-
-
-# Hunyuan: Tencent-style shapes, so server.py wraps JobId as job_<id> and
-# reads Status / ResultFile3Ds exactly as it does for OFFICIAL_API.
-
-_PREMIUM_TENCENT_STATUS = {"reserved": "WAIT", "running": "RUN", "succeeded": "DONE", "failed": "FAIL"}
-
-
-def premium_create_hunyuan_job(text_prompt=None, image=None, quality=None):
-    quality = _premium_quality("hunyuan", quality, bool(image))
-    result = premium_create_job("hunyuan", quality, text_prompt=text_prompt, image=image)
-    if not result.get("job_id"):
-        return result
-    return {"Response": {"JobId": result["job_id"]}, "message": premium_summary()}
-
-
-def premium_poll_hunyuan_job_status(job_id=None):
-    if not job_id:
-        return {"error": "JobId is required"}
-    job = _premium_job(str(job_id).removeprefix("job_"))
-    if job.get("code") or "status" not in job:
-        return job
-    response = {"Status": _PREMIUM_TENCENT_STATUS.get(job["status"], "RUN")}
-    files = _premium_job_files(job) if job["status"] == "succeeded" else None
-    if files:
-        model = next((f for f in files if f.get("role") == "model"), files[0])
-        _premium_files_by_url[model["url"]] = files
-        response["ResultFile3Ds"] = [{"Type": str(model.get("format") or "glb").upper(), "Url": model["url"]}]
-    if job["status"] == "failed":
-        response["ErrorMessage"] = (job.get("error") or "Generation failed") + ". This attempt wasn't counted."
-    return {"Response": response}
-
-
-def premium_import_generated_asset_hunyuan(name, zip_file_url):
-    if not zip_file_url or not re.match(r'^https?://', zip_file_url, re.IGNORECASE):
-        return {"error": "Invalid URL format. Must start with http:// or https://"}
-    files = _premium_files_by_url.get(zip_file_url)
-    if not files:
-        # Blender restarted since the poll: import the URL on its own.
-        path = zip_file_url.split("?", 1)[0].split("#", 1)[0].lower()
-        fmt = "obj" if path.endswith(".obj") else "glb"
-        files = [{"role": "model", "format": fmt, "url": zip_file_url, "file_name": f"model.{fmt}"}]
-    return import_model_files(files, name)
-
-
-# --- UI
-
-def _premium_draw_quality(prefs, layout, text="Default quality"):
-    row = layout.row(align=True)
-    row.label(text=text)
-    row.prop_enum(prefs, "premium_default_quality", "standard")
-    locked = _premium_high_locked()
-    sub = row.row(align=True)
-    sub.enabled = not locked
-    sub.prop_enum(prefs, "premium_default_quality", "high", text="High (Pro)" if locked else "High")
-
-
-def premium_draw_preferences(prefs, box):
-    col = box.column()
-    col.prop(prefs, "premium_license_key", text="License Key")
-    row = col.row(align=True)
-    if prefs.premium_instance_id:
-        row.operator("blendermcp.premium_deactivate", text="Deactivate", icon='UNLINKED')
-        row.operator("blendermcp.premium_refresh", text="Refresh", icon='FILE_REFRESH')
-    else:
-        row.operator("blendermcp.premium_activate", text="Activate", icon='LINKED')
-    if prefs.premium_instance_id:
-        col.label(text=premium_summary() if _premium_status else "Click Refresh to load your plan.",
-                  icon='INFO')
-    _premium_draw_quality(prefs, col)
-    row = col.row(align=True)
-    row.operator("blendermcp.premium_open_account", text="Manage account", icon='URL')
-    row.operator("wm.url_open", text="Get Premium", icon='FUND').url = PREMIUM_PRICING_URL
-
-
-def premium_draw_upsell(layout):
-    """For own-key users: a single line saying Premium exists and where to get it."""
-    row = layout.row(align=True)
-    row.label(text="No API keys? Use Premium", icon='FUND')
-    row.operator("wm.url_open", text="Get Premium").url = PREMIUM_PRICING_URL
-
-
-def premium_draw_panel(layout, prefs):
-    """Sidebar status in Premium mode. Reads the cache only."""
-    box = layout.box()
-    col = box.column(align=True)
-    col.label(text=premium_short_status(), icon='FUND')
-    if not premium_instance_id():
-        col.label(text="Activate your license key in Preferences.")
-        row = col.row(align=True)
-        row.operator("screen.userpref_show", text="Open Preferences", icon='PREFERENCES').section = 'ADDONS'
-        row.operator("wm.url_open", text="Get Premium", icon='FUND').url = PREMIUM_PRICING_URL
-    elif not _premium_status:
-        col.operator("blendermcp.premium_refresh", text="Load plan", icon='FILE_REFRESH')
-    elif not _premium_status.get("tier"):
-        col.label(text="Your subscription isn't active.")
-        row = col.row(align=True)
-        row.operator("blendermcp.premium_open_account", text="Manage account", icon='URL')
-        row.operator("wm.url_open", text="Get Premium", icon='FUND').url = PREMIUM_PRICING_URL
-    elif prefs is not None:
-        # Quality only means something once there's a plan to spend.
-        col.separator()
-        _premium_draw_quality(prefs, col, text="Quality")
-
-
-class BLENDERMCP_OT_PremiumActivate(bpy.types.Operator):
-    bl_idname = "blendermcp.premium_activate"
-    bl_label = "Activate Premium"
-    bl_description = "Activate this device with your Premium license key"
-
-    def execute(self, context):
-        prefs = get_blendermcp_addon_preferences(context)
-        key = premium_license_key()
-        if not prefs or not key:
-            self.report({'ERROR'}, "Paste your license key first.")
-            return {'CANCELLED'}
-        result = premium_request("POST", "/activate", {
-            "license_key": key,
-            "device_name": socket.gethostname() or "Blender",
-        }, auth=False)
-        if result.get("code") or not result.get("instance_id"):
-            self.report({'ERROR'}, result.get("message") or "Activation failed.")
-            return {'CANCELLED'}
-        prefs.premium_instance_id = result["instance_id"]
-        prefs.generation_source = "PREMIUM"
-        # Premium covers every generator, so switch them all on in this scene.
-        for _label, prop in PREMIUM_INTEGRATIONS.values():
-            with suppress(Exception):
-                setattr(context.scene, prop, True)
-        _premium_tag_redraw()
-        self.report({'INFO'}, premium_summary())
-        return {'FINISHED'}
-
-
-class BLENDERMCP_OT_PremiumDeactivate(bpy.types.Operator):
-    bl_idname = "blendermcp.premium_deactivate"
-    bl_label = "Deactivate Premium"
-    bl_description = "Free this device's activation slot so the key can be used on another machine"
-
-    def execute(self, context):
-        prefs = get_blendermcp_addon_preferences(context)
-        result = premium_request("POST", "/deactivate", {})
-        # A key the server no longer knows has nothing left to free.
-        if result.get("code") and result["code"] not in {"INVALID_KEY", "NOT_ACTIVATED"}:
-            self.report({'ERROR'}, result["message"])
-            return {'CANCELLED'}
-        if prefs:
-            prefs.premium_instance_id = ""
-            # Without an activation Premium can't generate, so go back to own keys.
-            # The license key stays filled in, so reactivating is one click.
-            prefs.generation_source = "BYOK"
-        _premium_status.clear()
-        # Deactivate runs from Preferences; the 3D Viewport sidebar won't redraw on its own.
-        _premium_tag_redraw()
-        self.report({'INFO'}, "This device was deactivated. Generation uses your own API keys again.")
-        return {'FINISHED'}
-
-
-class BLENDERMCP_OT_PremiumRefresh(bpy.types.Operator):
-    bl_idname = "blendermcp.premium_refresh"
-    bl_label = "Refresh Premium Status"
-    bl_description = "Fetch your plan and remaining generations"
-
-    def execute(self, context):
-        result = premium_request("GET", "/status")
-        if result.get("code"):
-            self.report({'ERROR'}, result["message"])
-            return {'CANCELLED'}
-        self.report({'INFO'}, premium_summary())
-        return {'FINISHED'}
-
-
-class BLENDERMCP_OT_PremiumOpenAccount(bpy.types.Operator):
-    bl_idname = "blendermcp.premium_open_account"
-    bl_label = "Manage Premium Account"
-    bl_description = "Upgrade, cancel or download invoices"
-
-    def execute(self, context):
-        # Portal links are per customer and short-lived, so fetch one per click.
-        url = PREMIUM_MANAGE_URL_DEFAULT
-        if premium_instance_id():
-            url = premium_request("GET", "/status?portal=1").get("manage_url") or url
-        bpy.ops.wm.url_open(url=url)
-        return {'FINISHED'}
-
-
-PREMIUM_CLASSES = (
-    BLENDERMCP_OT_PremiumActivate,
-    BLENDERMCP_OT_PremiumDeactivate,
-    BLENDERMCP_OT_PremiumRefresh,
-    BLENDERMCP_OT_PremiumOpenAccount,
-)
-#endregion
-
 # Blender Addon Preferences
 class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
@@ -5760,36 +5045,6 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
         description="Persistent Hunyuan3D API URL",
         default=""
     )
-    generation_source: bpy.props.EnumProperty(
-        name="Generation Source",
-        description="Where 3D model generation runs",
-        items=[
-            ("BYOK", "Your own API keys", "Use your own Hyper3D, fal.ai or Tencent Cloud keys"),
-            ("PREMIUM", "Premium", "Generate through MCP for Blender Premium with one license key"),
-        ],
-        default="BYOK",
-    )
-    premium_license_key: bpy.props.StringProperty(
-        name="Premium License Key",
-        subtype="PASSWORD",
-        description="License key from your MCP for Blender Premium purchase",
-        default=""
-    )
-    premium_instance_id: bpy.props.StringProperty(
-        name="Premium Instance ID",
-        description="Set when this device is activated",
-        default="",
-        options={'HIDDEN'},
-    )
-    premium_default_quality: bpy.props.EnumProperty(
-        name="Default Quality",
-        description="Quality Claude uses unless you ask for another. High uses a high-quality generation",
-        items=[
-            ("standard", "Standard", "Uses a standard generation"),
-            ("high", "High", "More detail; uses a high-quality generation (Pro)"),
-        ],
-        default="standard",
-    )
 
     def draw(self, context):
         layout = self.layout
@@ -5818,31 +5073,14 @@ class BLENDERMCP_AddonPreferences(bpy.types.AddonPreferences):
         row.operator("blendermcp.open_terms", text="View Terms and Conditions", icon='TEXT')
 
         layout.separator()
-        layout.label(text="3D Generation:", icon='SHADERFX')
-        gen_box = layout.box()
-        gen_box.row().prop(self, "generation_source", expand=True)
-        if self.generation_source == "PREMIUM":
-            premium_draw_preferences(self, gen_box)
-        else:
-            col = gen_box.column()
-            premium_draw_upsell(col)
-            col.separator()
-            col.prop(self, "hyper3d_api_key", text="Hyper3D API Key")
-            row = col.row(align=True)
-            row.operator("wm.url_open", text="hyper3d.ai keys", icon='URL').url = "https://hyper3d.ai/"
-            row.operator("wm.url_open", text="fal.ai keys", icon='URL').url = "https://fal.ai/dashboard/keys"
-            col.separator()
-            col.prop(self, "hunyuan3d_secret_id", text="Hunyuan3D SecretId")
-            col.prop(self, "hunyuan3d_secret_key", text="Hunyuan3D SecretKey")
-            col.operator("wm.url_open", text="Tencent Cloud keys", icon='URL').url = \
-                "https://console.cloud.tencent.com/cam/capi"
-            col.prop(self, "hunyuan3d_api_url", text="Hunyuan3D API URL")
-
-        layout.separator()
         layout.label(text="Persistent API Credentials:", icon='LOCKED')
         cred_box = layout.box()
         cred_box.prop(self, "sketchfab_api_key", text="Sketchfab API Key")
         cred_box.prop(self, "polypizza_api_key", text="Poly Pizza API Key")
+        cred_box.prop(self, "hyper3d_api_key", text="Hyper3D API Key")
+        cred_box.prop(self, "hunyuan3d_secret_id", text="Hunyuan3D SecretId")
+        cred_box.prop(self, "hunyuan3d_secret_key", text="Hunyuan3D SecretKey")
+        cred_box.prop(self, "hunyuan3d_api_url", text="Hunyuan3D API URL")
 
 # Blender UI Panel
 class BLENDERMCP_PT_Panel(bpy.types.Panel):
@@ -5911,17 +5149,10 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
         # AI model generation
         layout.separator()
         layout.label(text="AI Model Generation", icon='SHADERFX')
-        premium = premium_active()
-        if premium:
-            premium_draw_panel(layout, prefs)
-        else:
-            premium_draw_upsell(layout)
 
         sub = self._integration_header(
             layout, scene, "blendermcp_use_hyper3d", "Hyper3D Rodin", 'MESH_UVSPHERE')
-        if sub and premium:
-            sub.label(text="Runs through Premium")
-        elif sub:
+        if sub:
             col = sub.column(align=True)
             col.prop(scene, "blendermcp_hyper3d_mode", text="Mode")
             if prefs:
@@ -5933,9 +5164,7 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
 
         sub = self._integration_header(
             layout, scene, "blendermcp_use_hunyuan3d", "Tencent Hunyuan 3D", 'MESH_CUBE')
-        if sub and premium:
-            sub.label(text="Runs through Premium")
-        elif sub:
+        if sub:
             col = sub.column(align=True)
             col.prop(scene, "blendermcp_hunyuan3d_mode", text="Mode")
             if scene.blendermcp_hunyuan3d_mode == 'OFFICIAL_API':
@@ -5956,11 +5185,6 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
                 col.prop(scene, "blendermcp_hunyuan3d_num_inference_steps", text="Inference Steps")
                 col.prop(scene, "blendermcp_hunyuan3d_guidance_scale", text="Guidance Scale")
                 col.prop(scene, "blendermcp_hunyuan3d_texture", text="Generate Texture")
-
-        if premium:
-            sub = self._integration_header(layout, scene, "blendermcp_use_tripo", "Tripo", 'MESH_TORUS')
-            if sub:
-                sub.label(text="Runs through Premium")
 
         # Community section
         layout.separator()
@@ -6347,12 +5571,6 @@ def register():
         default=""
     )
 
-    bpy.types.Scene.blendermcp_use_tripo = bpy.props.BoolProperty(
-        name="Use Tripo",
-        description="Enable Tripo 3D model generation (Premium)",
-        default=False
-    )
-
     bpy.types.Scene.blendermcp_use_polypizza = bpy.props.BoolProperty(
         name="Use Poly Pizza",
         description="Enable Poly Pizza asset integration",
@@ -6376,11 +5594,6 @@ def register():
     bpy.utils.register_class(BLENDERMCP_OT_OpenTerms)
     bpy.utils.register_class(BLENDERMCP_OT_CheckAddonUpdate)
     bpy.utils.register_class(BLENDERMCP_OT_UpdateAddon)
-<<<<<<< HEAD
-=======
-    for cls in PREMIUM_CLASSES:
-        bpy.utils.register_class(cls)
->>>>>>> upstream/main
 
     # Off the register path: no network until Blender has finished starting.
     bpy.app.timers.register(_addon_update_check_on_startup, first_interval=5.0)
@@ -6411,11 +5624,6 @@ def unregister():
     for timer in (_addon_update_check_on_startup, _redraw_when_update_checked):
         if bpy.app.timers.is_registered(timer):
             bpy.app.timers.unregister(timer)
-<<<<<<< HEAD
-=======
-    for cls in PREMIUM_CLASSES:
-        bpy.utils.unregister_class(cls)
->>>>>>> upstream/main
     bpy.utils.unregister_class(BLENDERMCP_AddonPreferences)
 
     del bpy.types.Scene.blendermcp_port
@@ -6427,7 +5635,6 @@ def unregister():
     del bpy.types.Scene.blendermcp_hyper3d_api_key
     del bpy.types.Scene.blendermcp_use_sketchfab
     del bpy.types.Scene.blendermcp_sketchfab_api_key
-    del bpy.types.Scene.blendermcp_use_tripo
     del bpy.types.Scene.blendermcp_use_polypizza
     del bpy.types.Scene.blendermcp_polypizza_api_key
     del bpy.types.Scene.blendermcp_use_hunyuan3d

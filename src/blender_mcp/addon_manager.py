@@ -14,7 +14,7 @@ import os
 import re
 import shutil
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger("BlenderMCPServer")
@@ -170,7 +170,6 @@ class AddonHandshake:
     blender_version: str | None
     source: str  # native | missing | error
     warning: str | None = None
-    premium_generators: list[str] = field(default_factory=list)
 
 
 def get_bundled_addon_path() -> Path:
@@ -488,7 +487,6 @@ def handshake_addon(blender_connection) -> AddonHandshake:
             blender_version=info.get("blender_version"),
             source="native",
             warning=warning,
-            premium_generators=list(info.get("premium_generators") or []),
         )
     except Exception as e:
         msg = str(e).lower()
@@ -531,11 +529,7 @@ def format_handshake_log(result: AddonHandshake) -> str:
 
 
 def run_cli(argv: list[str] | None = None) -> int:
-<<<<<<< HEAD
-    """CLI entry for install-addon / addon-paths / setup. Returns process exit code."""
-=======
     """CLI entry for install-addon / addon-paths / setup / update. Returns process exit code."""
->>>>>>> upstream/main
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -584,10 +578,6 @@ def run_cli(argv: list[str] | None = None) -> int:
     setup_p.add_argument("--yes", "-y", action="store_true", help="Configure every client found without asking")
     setup_p.add_argument("--skip-addon", action="store_true", help="Configure clients only; leave Blender alone")
 
-<<<<<<< HEAD
-    args = parser.parse_args(argv)
-
-=======
     update_p = sub.add_parser(
         "update",
         help="Update the MCP server and the installed Blender addon to the latest release",
@@ -601,7 +591,6 @@ def run_cli(argv: list[str] | None = None) -> int:
 
         return run_update(dry_run=args.dry_run)
 
->>>>>>> upstream/main
     if args.command == "setup":
         from .setup_cli import run_setup
 

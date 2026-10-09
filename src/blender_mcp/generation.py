@@ -1,12 +1,12 @@
-"""One generate/poll/import flow across Tripo, Hunyuan3D and Hyper3D Rodin.
+"""One generate/poll/import flow across Hunyuan3D and Hyper3D Rodin.
 
 Each provider used to be three or four tools with different id shapes. Here a
 generation is a single call: submit, poll until done or out of time, import.
 If time runs out the caller gets a job handle ("<provider>:<kind>:<id>") and
 passes it back to resume, so no client timeout ever strands a paid generation.
 
-The addon still does the provider work (and the Premium routing), through the
-commands it has always had, so this needs no addon update.
+The addon still does the provider work, through the commands it has always had,
+so this needs no addon update.
 """
 
 import asyncio
@@ -24,11 +24,9 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("BlenderMCPServer")
 
-PROVIDERS = ("tripo", "hunyuan3d", "hyper3d")
+PROVIDERS = ("hunyuan3d", "hyper3d")
 
-# Auto-pick order. Premium generators come first because the user is paying
-# for them and they run the stronger models; among those Tripo is Premium-only.
-PREMIUM_ORDER = ("tripo", "hunyuan3d", "hyper3d")
+# Auto-pick order for the generators a user can run with their own keys.
 OWN_KEY_ORDER = ("hunyuan3d", "hyper3d")
 
 POLL_INTERVAL_S = 5.0
@@ -36,12 +34,9 @@ POLL_INTERVAL_S = 5.0
 # the TypeScript SDK cut tool calls off at 60 s by default, and a reply that
 # never arrives takes its job handle with it while the generation is charged.
 MAX_CALL_S = 45.0
-# Unfinished jobs older than this are dropped from the pending file: the
-# Premium sweeper fails jobs after 60 minutes, and provider results expire.
+# Unfinished jobs older than this are dropped from the pending file: jobs are
+# failed after 60 minutes, and provider results expire.
 PENDING_MAX_AGE_S = 2 * 3600
-
-TRIPO_UNAVAILABLE = ("Tripo is only available with MCP for Blender Premium. If Premium is on, update the Blender "
-                     "addon: run `uvx mcp-for-blender install-addon`, then restart Blender.")
 
 Send = Callable[[str, dict], Any]
 Progress = Callable[[float, float], Awaitable[None]]
@@ -58,7 +53,7 @@ class Unsupported(GenerationError):
 @dataclass
 class Job:
     provider: str
-    kind: str   # tripo: "rid"; hyper3d: "fal" | "main"; hunyuan3d: "job"
+    kind: str   # hyper3d: "fal" | "main"; hunyuan3d: "job"
     ident: str  # request id, job id, or "<task_uuid>|<subscription_key>"
     name: str
 
@@ -159,34 +154,22 @@ def default_name(prompt: str | None) -> str:
     return "".join(w.capitalize() for w in words) or "Generated"
 
 
-def choose_provider(requested: str, premium: list[str], own_key_enabled: dict[str, bool]) -> tuple[str, bool]:
-    """(provider, is_premium) for a request. `requested` is a provider or "auto"."""
+def choose_provider(requested: str, own_key_enabled: dict[str, bool]) -> str:
+    """Provider for a request. `requested` is a provider or "auto"."""
     requested = (requested or "auto").lower()
     if requested != "auto":
         if requested not in PROVIDERS:
             raise GenerationError(f"Unknown provider {requested!r}. Use one of: auto, {', '.join(PROVIDERS)}")
-        if premium:
-            if requested not in premium:
-                raise GenerationError(f"{requested} is not switched on in MCP for Blender Premium. "
-                                      f"On: {', '.join(premium)}. Tick it in the Blender sidebar.")
-            return requested, True
-        if requested == "tripo":
-            # Also what an addon from before Premium looks like, so say how to update.
-            raise GenerationError(TRIPO_UNAVAILABLE)
         if not own_key_enabled.get(requested):
             raise GenerationError(f"{requested} is not enabled. Turn it on and add an API key in the "
                                   "MCP for Blender sidebar in Blender (press N in the 3D Viewport).")
-        return requested, False
-    for name in PREMIUM_ORDER:
-        if name in premium:
-            return name, True
+        return requested
     for name in OWN_KEY_ORDER:
         if own_key_enabled.get(name):
-            return name, False
+            return name
     raise GenerationError(
         "No 3D generator is enabled. In Blender's MCP for Blender sidebar, turn on Hunyuan3D or Hyper3D "
-        "Rodin with an API key, or use MCP for Blender Premium (no keys needed): "
-        "https://mcp-for-blender.com/premium"
+        "Rodin with an API key in the 3D Viewport."
     )
 
 
@@ -213,16 +196,6 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
            quality: str | None, bbox_condition: list | None, supports_quality: bool) -> Job | str:
     """Start a generation. Returns a Job, or a finished message for providers
     that generate synchronously (Hunyuan3D LOCAL_API)."""
-    if provider == "tripo":
-        params = {"text_prompt": prompt, "image": image}
-        if quality:
-            params["quality"] = quality
-        result = send("create_tripo_job", params)
-        _relay(result)
-        if not result.get("request_id"):
-            raise GenerationError(f"Tripo returned no request id: {result}")
-        return Job("tripo", "rid", result["request_id"], name)
-
     if provider == "hunyuan3d":
         params = {"text_prompt": prompt, "image": image}
         if quality and supports_quality:
@@ -254,9 +227,8 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
 
 def poll(send: Send, job: Job) -> tuple[str, Any]:
     """("running" | "done" | "failed", detail) for one status check."""
-    if job.provider == "tripo" or (job.provider == "hyper3d" and job.kind == "fal"):
-        command = "poll_tripo_job_status" if job.provider == "tripo" else "poll_rodin_job_status"
-        result = send(command, {"request_id": job.ident})
+    if job.provider == "hyper3d" and job.kind == "fal":
+        result = send("poll_rodin_job_status", {"request_id": job.ident})
         status = str(result.get("status", "")).upper() if isinstance(result, dict) else ""
         # A failed job also carries "error"; read the status first so it counts
         # as the provider's verdict, not as a lost connection.
@@ -294,9 +266,7 @@ def poll(send: Send, job: Job) -> tuple[str, Any]:
 
 
 def import_result(send: Send, job: Job, detail: Any) -> Any:
-    if job.provider == "tripo":
-        result = send("import_generated_asset_tripo", {"request_id": job.ident, "name": job.name})
-    elif job.provider == "hyper3d" and job.kind == "fal":
+    if job.provider == "hyper3d" and job.kind == "fal":
         result = send("import_generated_asset", {"request_id": job.ident, "name": job.name})
     elif job.provider == "hyper3d":
         result = send("import_generated_asset", {"task_uuid": job.ident.split("|", 1)[0], "name": job.name})

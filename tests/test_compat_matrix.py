@@ -48,7 +48,6 @@ RELEASED_SERVER_COMMANDS = {
     "get_polypizza_status", "search_polypizza_models", "download_polypizza_model",
     "get_hyper3d_status", "create_rodin_job", "poll_rodin_job_status", "import_generated_asset",
     "get_hunyuan3d_status", "create_hunyuan_job", "poll_hunyuan_job_status", "import_generated_asset_hunyuan",
-    "get_tripo_status", "create_tripo_job", "poll_tripo_job_status", "import_generated_asset_tripo",
     "export_scene",
 }
 
@@ -146,7 +145,7 @@ class HistoricalAddon:
             return {"success": True, "width": 1, "height": 1}
         if command == "get_addon_info":
             return {"protocol_version": self.protocol, "addon_version": [1, 0], "capabilities": [],
-                    "blender_version": "4.2.0", "premium_generators": []}
+                    "blender_version": "4.2.0"}
         if command.startswith("get_") and command.endswith("_status"):
             return {"enabled": True, "message": "ready"}
         if command == "get_scene_info":
@@ -192,7 +191,14 @@ def _run(coro_or_value):
 
 
 def _has_image(result) -> bool:
-    return isinstance(result, CallToolResult) and any(isinstance(c, ImageContent) for c in result.content)
+    if not isinstance(result, CallToolResult):
+        return False
+    if any(isinstance(c, ImageContent) for c in result.content):
+        return True
+    # This fork hands the model a path on disk instead of inline image bytes
+    # (the Freebuff harness cannot render image content), so a delivered file
+    # counts as showing something.
+    return any("saved the image to" in (getattr(c, "text", "") or "") for c in result.content)
 
 
 def _text(result) -> str:

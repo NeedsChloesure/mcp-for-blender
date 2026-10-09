@@ -23,7 +23,7 @@ class FakeBlender:
         if self.error:
             raise Exception(f"Communication error with Blender: {self.error}")
         return {
-            "get_addon_info": {"premium_generators": []},
+            "get_addon_info": {},
             "get_hunyuan3d_status": {"enabled": True},
             "get_hyper3d_status": {"enabled": False},
             "create_hunyuan_job": {"Response": {"JobId": "a"}},
@@ -49,12 +49,3 @@ def test_hunyuan_quality_reaches_only_addons_that_accept_it(monkeypatch, protoco
     create = next(params for command, params in blender.sent if command == "create_hunyuan_job")
     assert ("quality" in create) is sends_quality
 
-
-@pytest.mark.parametrize("kwargs", [
-    {"prompt": "stool", "provider": "tripo"},
-    {"job": "tripo:rid:r", "name": "n"},
-])
-def test_tripo_explains_itself_when_the_addon_has_no_tripo(monkeypatch, kwargs):
-    _connect(monkeypatch, 9, error="Unknown command type: x")
-    out = asyncio.run(server.generate_3d(None, **kwargs))
-    assert out == f"Error: {server.TRIPO_UNAVAILABLE}"

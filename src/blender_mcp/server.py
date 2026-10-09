@@ -1,21 +1,19 @@
 # blender_mcp_server.py
-from mcp.server.fastmcp import FastMCP, Context, Image
+from mcp.server.fastmcp import FastMCP, Context
 import argparse
 import socket
 import json
-import asyncio
 import logging
 import tempfile
 import threading
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List
+from typing import AsyncIterator, Dict, Any
 import os
 import sys
 import time
-from pathlib import Path
 import base64
-from urllib.parse import urlparse
+import re
 
 from .image_files import deliver_image, image_output_mode
 from .addon_manager import (
@@ -25,6 +23,7 @@ from .addon_manager import (
     EXPECTED_ADDON_PROTOCOL_VERSION,
     check_addon_status_on_startup,
 )
+from . import blender_scripts, context_log, generation
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 from .openai_apps import (
     APP_MIME_TYPE,
@@ -192,8 +191,12 @@ class BlenderConnection:
         else:
             raise Exception("No data received")
 
-    def send_command(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Send a command to Blender and return the response"""
+    def send_command(self, command_type: str, params: Dict[str, Any] = None, read_only: bool = False) -> Dict[str, Any]:
+        """Send a command to Blender and return the response.
+
+        `read_only` marks an execute_code the server runs only to observe the
+        scene, so the Viewport app doesn't treat it as an edit and recapture.
+        """
         # Hold the lock across send+receive: the response is matched to the
         # command purely by ordering on the stream, so overlapping calls would
         # hand each other's responses back.
@@ -203,7 +206,7 @@ class BlenderConnection:
             try:
                 return self._send_command_locked(command_type, params)
             finally:
-                viewport_store.command_finished(command_type)
+                viewport_store.command_finished("observe" if read_only else command_type)
 
     def _send_command_locked(self, command_type: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         if not self.sock and not self.connect():
@@ -300,37 +303,34 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
             _blender_connection = None
         logger.info("BlenderMCP server shut down")
 
-# Guidance delivered to clients in the `initialize` response.
-#
-# The asset-library playbook lives in the asset_creation_strategy prompt, which
-# clients only receive if they call prompts/get. Many never do, so the rules that
-# keep generated scripts from breaking are repeated here. Kept short because
-# instructions are injected into every conversation (see #347 on context cost).
-SERVER_INSTRUCTIONS = """Blender MCP drives a live Blender instance. execute_blender_code runs
-arbitrary Python there, so scripts must not assume anything about the user's Blender.
+# Guidance delivered to clients in the `initialize` response. This is the only
+# guidance every client is sure to get: MCP prompts are user-invoked, and the
+# model has no way to fetch one. Per-tool details belong in tool descriptions.
+# Kept short because instructions are injected into every conversation (see
+# #347 on context cost).
+SERVER_INSTRUCTIONS = """MCP for Blender drives the user's live Blender. execute_blender_code runs Python there
+with the full bpy API, so anything Blender can do, you can do; look shows you the result.
 
-Before writing code, call get_addon_status() to read `blender_version` and get_scene_info() to
-see what already exists.
+Start with get_addon_status (Blender version, which libraries and generators are on) and
+get_scene_info.
 
-When writing code:
-- Look shader nodes up by type, never by name. Node names are localized on a non-English Blender
-  UI, so `nodes["Principled BSDF"]` returns None there; use
-  `next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")` instead.
-- Never hardcode enum identifiers; they change between Blender versions. Read the valid values
-  first, e.g.
-  `[i.identifier for i in scene.render.image_settings.bl_rna.properties["file_format"].enum_items]`.
-- `scene.render.engine` is the exception: it is a dynamic enum and RNA under-reports it, because
-  engines registered by add-ons are not RNA enum items. Read the current value, which is always
-  valid, and if you must switch engines assign inside `try/except TypeError`; the error lists
-  every accepted identifier.
-- With `use_nodes` enabled (the default for new materials), set colors on the shader node inputs.
-  `material.diffuse_color` only drives viewport display and does not affect the render.
+Scripts run in someone else's Blender:
+- Look shader nodes up by type, never by name (names are localized):
+  `next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")`.
+- Never hardcode enum identifiers; read them, e.g.
+  `[i.identifier for i in bpy.types.RenderSettings.bl_rna.properties["file_format"].enum_items]`.
+  scene.render.engine under-reports: read the current value, and assign a new one inside
+  try/except TypeError, whose message lists the valid engines.
+- Material colors go on shader node inputs; material.diffuse_color only affects the viewport.
 
-After changing anything, call get_viewport_screenshot() to confirm the result looks right and
-get_scene_info() to confirm the objects exist.
+look is how you see your work; use it as much as you need. Images stay in the conversation, so
+a smaller max_size keeps long sessions cheap.
 
-Call the asset_creation_strategy prompt for the full asset-library workflow (Poly Haven,
-Sketchfab, Poly Pizza, Hyper3D Rodin, Hunyuan3D)."""
+Objects can also come from existing libraries (search_assets, then import_asset: Poly Haven,
+Sketchfab, Poly Pizza) or be made to order (generate_3d: one new textured model from text or an
+image, 1-3 minutes, may cost the user a credit). A generation is one object, never a whole
+scene, the ground or parts to assemble. Imported and generated models arrive at arbitrary
+scale: use the reported world_bounding_box to size them and put them on the ground."""
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
@@ -392,10 +392,30 @@ def get_blender_connection():
     return _blender_connection
 
 
+def _integrations(blender: BlenderConnection) -> dict:
+    """Which libraries (search_assets) and generators (generate_3d) are on. Reads
+    local settings only."""
+    status = {}
+    for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d"):
+        try:
+            reply = blender.send_command(f"get_{name}_status")
+            status[name] = "on" if reply.get("enabled") else "off"
+        except Exception as e:
+            status[name] = "not in this addon version" if _addon_lacks(e) else "unknown"
+    return {
+        "libraries": {k: status[k] for k in ("polyhaven", "sketchfab", "polypizza")},
+        "generators": {k: status[k] for k in ("hunyuan3d", "hyper3d")},
+    }
+
+
 @mcp.tool()
 async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
     """
-    Check whether the connected Blender addon matches this MCP server version.
+    Check the connected Blender: its version, whether the addon matches this server, and which
+    asset libraries and 3D generators are switched on. Call it once at the start.
+
+    `libraries` are the search_assets sources and `generators` the generate_3d providers, each
+    on or off for this user.
 
     If outdated, tells the user how to update via `uvx mcp-for-blender install-addon`
     (then restart or re-enable the addon in Blender).
@@ -416,6 +436,7 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
             "addon_version": result.addon_version,
             "capabilities": result.capabilities,
             "blender_version": result.blender_version,
+            **_integrations(blender),
             "source": result.source,
             "warning": result.warning,
             "update_command": "uvx mcp-for-blender install-addon",
@@ -441,34 +462,138 @@ def disable_telemetry(ctx: Context, user_prompt: str = "") -> str:
     return "Nothing to disable: telemetry and analytics are not part of this fork."
 
 
+# Backwards compatibility. The server updates itself through uvx, but the addon
+# only changes when the user reinstalls it, so any server must work with any
+# addon. Two rules keep that true:
+# - Never assume a command or argument exists. A command an addon doesn't know
+#   comes back as "Unknown command type", and an argument newer than the addon
+#   as "unexpected keyword argument"; missing_feature turns either into one message,
+#   which asks for an addon update when the handshake says the addon is behind
+#   and for a sidebar checkbox when it isn't.
+# - Every observation has a fallback to something older addons have
+#   (look -> the native screenshot, get_scene_info -> the addon's own summary).
+# tests/test_compat_matrix.py runs the tools against real past addons.
+
+ADDON_UPDATE_HINT = "Update the Blender addon: run `uvx mcp-for-blender install-addon`, then restart Blender."
+
+
+class AddonTooOld(Exception):
+    """The connected addon can't do this; the message says what to update."""
+
+
+def _addon_outdated() -> bool:
+    return _addon_handshake is None or not _addon_handshake.up_to_date
+
+
+_ADDON_LACKS = ("Unknown command type", "unexpected keyword argument")
+
+
+def _addon_lacks(e: Exception | str) -> bool:
+    """Whether a failure means the addon predates the command or an argument."""
+    return any(marker in str(e) for marker in _ADDON_LACKS)
+
+
+def missing_feature(what: str, sidebar_label: str | None = None) -> str:
+    """What to tell the user when the addon doesn't handle a command.
+
+    Integration commands are only registered while their sidebar checkbox is
+    ticked, so on an up-to-date addon a missing one means switched off.
+    """
+    if sidebar_label and not _addon_outdated():
+        return (f"{sidebar_label} is switched off. Ask the user to tick it in the MCP for Blender sidebar "
+                "in Blender (press N in the 3D Viewport).")
+    reply = f"The Blender addon is too old for {what}. {ADDON_UPDATE_HINT}"
+    if sidebar_label:
+        reply += f" If it is already up to date, tick {sidebar_label} in the MCP for Blender sidebar."
+    return reply
+
+
+def _run_script(script: str, args: dict) -> dict:
+    """Run one of blender_scripts' observation scripts and return its result."""
+    result = get_blender_connection().send_command(
+        "execute_code", {"code": blender_scripts.build(script, args)}, read_only=True)
+    # Addons before April 2025 run code but don't return what it prints.
+    if not isinstance(result, dict) or "result" not in result:
+        raise AddonTooOld(missing_feature("this view"))
+    return blender_scripts.parse_result(result["result"])
+
+
+def _format_scene_summary(data: dict, fields) -> str:
+    h = data["header"]
+    counts = ", ".join(f"{n} {kind}" for kind, n in sorted(h["object_counts"].items())) or "empty"
+    selected = ", ".join(h["selected"]) or "none"
+    extra = h.get("selected_count", len(h["selected"])) - len(h["selected"])
+    if extra > 0:
+        selected += f" +{extra} more"
+    lines = [f"Scene '{h['scene']}' | {counts} | active {h['active'] or 'none'} | selected {selected} | mode {h['mode']}"]
+    st = h.get("settings")
+    if st:
+        lines.append(
+            f"{st['file']} | engine {st['engine']} | frames {st['frames'][0]}-{st['frames'][1]} "
+            f"(now {st['frames'][2]}) at {st['fps']} fps | {st['resolution'][0]}x{st['resolution'][1]} | "
+            f"camera {st['camera'] or 'none'} | HDRI {st['world_hdri'] or 'none'} | unit scale {st['unit_scale']}"
+        )
+    columns = " | ".join(["name", "type", *(f for f in blender_scripts.SCENE_FIELDS if f in fields and f != "settings")])
+    lines += ["", f"Showing {data['shown']} of {data['total']} ({columns}):", *data["lines"]]
+    if data["shown"] < data["total"]:
+        lines.append(f"... {data['total'] - data['shown']} more. Narrow with query= or root=, or raise limit.")
+    return "\n".join(lines)
+
+
 @mcp.tool()
-async def get_scene_info(ctx: Context, user_prompt: str = "") -> str:
-    """Get detailed information about the current Blender scene"""
+async def get_scene_info(
+    ctx: Context,
+    user_prompt: str = "",
+    query: str | None = None,
+    root: str | None = None,
+    fields: list[str] | None = None,
+    limit: int = 20,
+) -> str:
+    """
+    Facts about the scene as text: what's there, where, how big, and how healthy meshes and rigs
+    are. No image; to see the scene, use look.
+
+    One header line (object counts, active, selection, mode), then one line per object with the
+    fields you ask for. Top-level objects by default; root="Name" lists that object's hierarchy,
+    query="chair" lists every object whose name contains the text. For anything else about an
+    object, read it with execute_blender_code.
+
+    Parameters:
+    - fields: What to show per object (default: location, size, children, hidden).
+      placement: location (world), size (world bounding box), ground (on ground, floating or
+        below by), rotation (degrees), scale, parent
+      contents: children (count), hidden, details (faces, bones or light power), materials,
+        modifiers, animation
+      health: topology (quads, tris, ngons, non-manifold and boundary edges, loose verts,
+        poles), weights (vertices no deform bone moves, deform bones with no vertex group)
+      settings: adds a line with the file, engine, frame range, resolution, camera, HDRI and
+        unit scale
+    - query: Name filter across all objects.
+    - root: Object whose hierarchy to list.
+    - limit: Maximum object lines (default 20).
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
+    """
+    fields = list(blender_scripts.SCENE_DEFAULT_FIELDS) if fields is None else list(dict.fromkeys(fields))
+    unknown = [f for f in fields if f not in blender_scripts.SCENE_FIELDS]
+    if unknown:
+        return f"Error: unknown fields {', '.join(unknown)}. Pick from: {', '.join(blender_scripts.SCENE_FIELDS)}"
     try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_scene_info")
-        # Just return the JSON representation of what Blender sent us
-        return json.dumps(result, indent=2)
+        try:
+            data = _run_script(blender_scripts.SCENE_SUMMARY,
+                               {"query": query, "root": root, "limit": limit, "fields": fields})
+        except Exception as e:
+            # Very old addons, or a Blender that can't run the script: the
+            # addon's own summary still says what's there.
+            logger.debug(f"Scene summary script failed, using get_scene_info: {e}")
+            result = get_blender_connection().send_command("get_scene_info")
+            return json.dumps(result, indent=2)
+        if data.get("error"):
+            return f"Error: {data['error']}"
+        return _format_scene_summary(data, fields)
     except Exception as e:
         logger.error(f"Error getting scene info from Blender: {str(e)}")
         return f"Error getting scene info: {str(e)}"
 
-@mcp.tool()
-async def get_object_info(ctx: Context, object_name: str, user_prompt: str = "") -> str:
-    """
-    Get detailed information about a specific object in the Blender scene.
-
-    Parameters:
-    - object_name: The name of the object to get information about
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_object_info", {"name": object_name})
-        # Just return the JSON representation of what Blender sent us
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        logger.error(f"Error getting object info from Blender: {str(e)}")
-        return f"Error getting object info: {str(e)}"
 
 def _capture_viewport(max_size: int) -> tuple[bytes, dict]:
     """Have the addon render the viewport to a temp file.
@@ -507,21 +632,8 @@ def _store_capture(max_size: int, source: str) -> None:
 
 
 # In MCP Apps hosts the result also shows in the fullscreen Viewport app.
-@mcp.tool(meta={"ui": {"resourceUri": VIEWPORT_URI}})
-def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> Any:
-    """
-    Capture a screenshot of the current Blender 3D viewport.
-
-    Parameters:
-    - max_size: Maximum size in pixels for the largest dimension (default: 800)
-
-    Writes the screenshot to a PNG file and returns its absolute path, because
-    many hosts cannot display inline image content. When you get a path back,
-    open it with your file-reading tool (for example read_files) to actually see
-    the viewport. Set BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself
-    instead.
-    """
-    
+def _viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str = "") -> CallToolResult:
+    """look(mode="viewport"): the user's viewport, also shown in the Viewport app."""
     try:
         _store_capture(max_size, "model")
         state, image_bytes = _viewport_snapshot()
@@ -537,7 +649,7 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
                 text=deliver_image(
                     image_bytes,
                     "png",
-                    "get_viewport_screenshot",
+                    "look",
                     detail=f"Blender viewport screenshot (max_size={max_size}).",
                 ),
             )]
@@ -547,7 +659,6 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
         )
         
     except Exception as e:
-        error_msg = str(e)
         logger.error(f"Error capturing screenshot: {str(e)}")
         raise Exception(f"Screenshot failed: {str(e)}")
 
@@ -555,10 +666,13 @@ def get_viewport_screenshot(ctx: Context, max_size: int = 1000, user_prompt: str
 @mcp.tool()
 async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -> str:
     """
-    Execute arbitrary Python code in Blender. Make sure to do it step-by-step by breaking it into smaller chunks.
+    Run Python in the user's live Blender (bpy, bmesh, mathutils). Whatever it prints is returned.
+
+    Work in small steps and print what you need to know.
 
     Parameters:
     - code: The Python code to execute
+    - user_prompt: The user's own words describing what they want, quoted verbatim (do not paraphrase or summarise). Pass the same goal on every call in a multi-step task so each action is linked to the intent behind it. Never substitute your own sub-goal, plan step, or status text; if the user has given no new instruction, repeat their previous words unchanged.
     """
     if safe_mode_enabled():
         try:
@@ -590,67 +704,6 @@ async def execute_blender_code(ctx: Context, code: str, user_prompt: str = "") -
         except (ValueError, KeyError, TypeError):
             return f"Error executing code: {str(e)}"
         return f"Error executing code: {detail.get('exception_type', 'Error')}: {detail.get('message', '')}\n\n{traceback_text}"
-
-@mcp.tool()
-async def describe_node_type(ctx: Context, bl_idname: str, property_overrides: Dict[str, Any] = None, user_prompt: str = "") -> str:
-    """
-    Look up the property and socket schema of a Blender node type, without touching the current scene.
-
-    Answers exactly the questions that otherwise take several trial-and-error
-    execute_blender_code calls: what are this node's inputs/outputs (name,
-    type, socket index, default value), what non-default properties does it
-    have (e.g. data_type, blend_type, sky_type), and what enum values are
-    valid for each. Internally this creates a throwaway node in a scratch
-    node tree, optionally applies property_overrides, reads its schema, then
-    deletes the scratch tree - it never modifies anything the user can see.
-
-    Use this BEFORE writing code that indexes a node's sockets or sets an
-    enum property, instead of guessing socket order or enum spelling.
-
-    Parameters:
-    - bl_idname: The node's bl_idname, e.g. "ShaderNodeMix", "ShaderNodeTexSky", "ShaderNodeBsdfPrincipled".
-    - property_overrides: Optional dict of property values to set on the node before reading its sockets, e.g. {"data_type": "RGBA"} for a Mix node. Socket layout for many nodes depends on these mode-like properties, so set them here to see the real layout for the mode you intend to use.
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("describe_node_type", {
-            "bl_idname": bl_idname,
-            "property_overrides": property_overrides or {},
-        })
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        logger.error(f"Error describing node type {bl_idname}: {str(e)}")
-        return f"Error describing node type '{bl_idname}': {str(e)}"
-
-
-@mcp.tool()
-async def bpy_api_lookup(ctx: Context, query: str, user_prompt: str = "") -> str:
-    """
-    Structured Blender RNA/API reference lookup: types, properties, functions, and operators.
-
-    Returns real signature data as JSON - argument names, types, whether
-    each is required, enum identifiers, min/max, defaults - instead of text
-    that has to be scraped out of help() output. Use this instead of
-    guessing an operator's argument names or a property's valid enum values.
-
-    Query forms:
-    - "ShaderNodeTexSky"                      -> full type schema: all properties + methods
-    - "ShaderNodeTexSky.sky_type"              -> one property's type, enum items, default
-    - "Object.ray_cast"                        -> one method's parameters and return values
-    - "bpy.ops.mesh.primitive_cube_add"        -> operator parameters (name, type, default, enum items)
-    A leading "bpy." / "bpy.types." is optional and stripped automatically.
-    If a name is not found, the result includes a "did_you_mean" list of close matches.
-
-    Parameters:
-    - query: The type, property, method, or operator path to look up (see forms above).
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("bpy_api_lookup", {"query": query})
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        logger.error(f"Error looking up '{query}': {str(e)}")
-        return f"Error looking up '{query}': {str(e)}"
 
 
 def _polyhaven_credit(result):
@@ -691,6 +744,13 @@ def _polyhaven_scale_note(result):
     )
 
 
+POLYHAVEN_UNUSED_NOTE = (
+    "Nothing is using it yet: assign the material to objects (import_asset's apply_to does it in "
+    "the same call). Saving the file before then discards it, as Blender does with any unused "
+    "datablock, and it would have to be downloaded again."
+)
+
+
 def _polyhaven_thumbnail(asset: dict) -> str:
     # Addons before protocol 12 don't pass thumbnail_url on. The hand-built URL
     # lacks the cache-busting `v`, which only risks a stale image in a picker.
@@ -699,107 +759,17 @@ def _polyhaven_thumbnail(asset: dict) -> str:
     )
 
 
-@mcp.tool()
-async def get_polyhaven_categories(ctx: Context, asset_type: str = "hdris", user_prompt: str = "") -> str:
-    """
-    Get the categories and attributes you can filter Poly Haven assets by.
-
-    Every asset sits in exactly one category, given as a path like
-    "Coast & Water/Beaches/Sandy Beaches". Filtering is inclusive, so passing a
-    parent path to search_polyhaven_assets also returns everything beneath it.
-
-    Categories describe what an asset IS. Qualities like weather, condition or
-    material are separate attributes, and every attribute this type supports is
-    listed in the response with the exact values it accepts. Pass those to
-    search_polyhaven_assets's `attributes`.
-
-    Parameters:
-    - asset_type: hdris, textures, models, or all. Asking for one type returns
-      its full tree; "all" returns only the top two levels of each.
-    """
-    try:
-        blender = get_blender_connection()
-        status = blender.send_command("get_polyhaven_status")
-        if not status.get("enabled", False):
-            return "PolyHaven integration is disabled. Select it in the sidebar in BlenderMCP, then run it again."
-        result = blender.send_command("get_polyhaven_categories", {"asset_type": asset_type})
-
-        if "error" in result:
-            return f"Error: {result['error']}"
-
-        lines = []
-        for taxonomy in result["taxonomy"]:
-            lines.append(f"{taxonomy['type']} categories:")
-            for path in taxonomy["categories"]:
-                lines.append(f"  {path}")
-            if result.get("truncated"):
-                lines.append("  (top two levels only - ask for a single asset type for the rest)")
-            lines.append("")
-
-            if taxonomy["attributes"]:
-                lines.append(f"{taxonomy['type']} attributes:")
-                for key, spec in taxonomy["attributes"].items():
-                    values = spec.get("enum")
-                    allowed = ", ".join(values) if values else spec.get("type", "")
-                    lines.append(f"  {key}: {allowed}")
-                    if spec.get("description"):
-                        lines.append(f"    {spec['description']}")
-                lines.append("")
-
-        return "\n".join(lines)
-    except Exception as e:
-        logger.error(f"Error getting Polyhaven categories: {str(e)}")
-        return f"Error getting Polyhaven categories: {str(e)}"
-@mcp.tool()
-async def search_polyhaven_assets(
+async def _search_polyhaven(
     ctx: Context,
-    query: str = None,
+    query: str | None = None,
     asset_type: str = "all",
-    category: str = None,
-    attributes: dict = None,
-    min_size_m: float = None,
+    category: str | None = None,
+    attributes: dict | None = None,
+    min_size_m: float | None = None,
     limit: int = 20,
     user_prompt: str = ""
 ) -> str:
-    """
-    Search Poly Haven's library of free CC0 HDRIs, textures and models.
-
-    Parameters:
-    - query: What you are looking for, in plain words ("rusty metal", "overcast
-      afternoon", "wooden chair"). Poly Haven's search understands intent and
-      synonyms in any language, so describe the thing rather than guessing at
-      keywords - "couch" finds sofas. Leave it out to browse the most downloaded
-      assets instead.
-    - asset_type: hdris, textures, models, or all
-    - category: Optional single category path, exactly as get_polyhaven_categories
-      returns it ("Metal/Sheet & Corrugated"). Matching is inclusive, so a parent
-      path also returns everything nested beneath it.
-    - attributes: Optional filters on an asset's qualities, as key/value pairs -
-      {"weather": "clear"}, {"material": ["wood", "metal"]} to match either,
-      {"rigged": true}. Call get_polyhaven_categories for the keys and values
-      each asset type accepts; an unrecognised one is an error, not an empty
-      result.
-    - min_size_m: Optional floor on an asset's real-world size, in metres. A
-      texture covers a fixed real-world area, so a 0.5m one tiled across a 4m wall
-      repeats eight times and reads as an obvious pattern rather than as a wall.
-      Filter on it when the surface is large: min_size_m=2 for walls, floors and
-      ground, and leave it out for props. Only textures and models publish a size,
-      so HDRIs are excluded by this filter.
-    - limit: How many results to return (default 20, maximum 50)
-
-    Results are returned in ranked order, most relevant first. The library always
-    returns its closest matches even for a query it has nothing for, so judge the
-    results themselves rather than assuming the top one is right.
-
-    Two things worth reading in the results before picking one. The real-world
-    size decides how many times a texture repeats across a surface, and its
-    `surface_use` attribute says what it was photographed for - a texture tagged
-    `object` is a prop material, not a wall. get_polyhaven_asset_preview shows the
-    thumbnail for a few hundred kilobytes, which is cheaper than importing the
-    wrong one.
-
-    Returns each asset's id, name, type, author, category, tags and page URL.
-    """
+    """search_assets(source="polyhaven"): ranked Poly Haven results, with real-world sizes and the picker."""
     try:
         blender = get_blender_connection()
         result = blender.send_command("search_polyhaven_assets", {
@@ -880,84 +850,16 @@ async def search_polyhaven_assets(
     except Exception as e:
         logger.error(f"Error searching Polyhaven assets: {str(e)}")
         return f"Error searching Polyhaven assets: {str(e)}"
-@mcp.tool()
-async def get_polyhaven_asset_preview(
-    ctx: Context,
-    asset_id: str, user_prompt: str = "") -> Any:
-    """
-    Get a preview thumbnail of a Poly Haven asset by its ID.
-    Use this to check an asset looks right before downloading it.
 
-    A thumbnail is a few hundred kilobytes against a 4k texture's 24MB, so
-    looking first is much cheaper than importing the wrong thing and trying again.
-
-    Parameters:
-    - asset_id: The Poly Haven asset ID (obtained from search_polyhaven_assets)
-
-    Writes the thumbnail to a file and returns its absolute path, because many
-    hosts cannot display inline image content. When you get a path back, open it
-    with your file-reading tool (for example read_files) to see the preview. Set
-    BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself instead.
-    """
-    try:
-        blender = get_blender_connection()
-        logger.info(f"Getting Poly Haven preview for: {asset_id}")
-
-        result = blender.send_command("get_polyhaven_asset_preview", {"asset_id": asset_id})
-
-        if result is None:
-            raise Exception("Received no response from Blender")
-
-        if "error" in result:
-            raise Exception(result["error"])
-
-        image_data = base64.b64decode(result["image_data"])
-        authors = ", ".join(result.get("authors") or []) or "Poly Haven"
-        logger.info(f"Preview retrieved for '{result.get('name')}' by {authors} - {result.get('url')}")
-
-        img_format = result.get("format", "png")
-
-        if image_output_mode() == "inline":
-            return Image(data=image_data, format=img_format)
-        return deliver_image(
-            image_data,
-            img_format,
-            "get_polyhaven_asset_preview",
-            detail=f"Poly Haven preview of '{result.get('name')}' by {authors}.",
-        )
-
-    except Exception as e:
-        logger.error(f"Error getting Poly Haven preview: {str(e)}")
-        raise Exception(f"Failed to get preview: {str(e)}")
-
-
-@mcp.tool()
-async def download_polyhaven_asset(
+async def _download_polyhaven(
     ctx: Context,
     asset_id: str,
     asset_type: str,
     resolution: str = "1k",
-    file_format: str = None,
+    file_format: str | None = None,
     user_prompt: str = ""
 ) -> str:
-    """
-    Download and import a Polyhaven asset into Blender.
-
-    Parameters:
-    - asset_id: The ID of the asset to download
-    - asset_type: The type of asset (hdris, textures, models)
-    - resolution: The resolution to download. Poly Haven offers 1k, 2k, 4k and 8k for
-      most assets, and up to 16k or 24k for some HDRIs. File size grows roughly
-      fourfold per step, so prefer 1k-2k for background or filler assets and 4k for
-      anything held close to camera. If a resolution is unavailable, the error names
-      the ones that are.
-    - file_format: Optional. hdr (default) or exr for HDRIs; jpg (default), png or exr
-      for textures. Models are always imported from .blend and take no format argument:
-      Poly Haven authors them in Blender and generates every other format from that file,
-      so glTF and FBX are lossy renderings of a material that ships with the asset.
-
-    Returns a message indicating success or failure.
-    """
+    """import_asset(source="polyhaven"): download an HDRI, texture or model and say where it came from."""
     try:
         blender = get_blender_connection()
         result = blender.send_command("download_polyhaven_asset", {
@@ -981,9 +883,7 @@ async def download_polyhaven_asset(
                 maps = ", ".join(result.get("maps", []))
                 message = (
                     f"{message}. Created material '{material_name}' with maps: {maps}. "
-                    "Nothing is using it yet - call set_texture to apply it to an object. "
-                    "Saving the file before then discards it, as Blender does with any "
-                    "unused datablock, and it would have to be downloaded again."
+                    f"{POLYHAVEN_UNUSED_NOTE}"
                     f"{_polyhaven_scale_note(result)}"
                 )
             elif asset_type == "models":
@@ -999,22 +899,11 @@ async def download_polyhaven_asset(
         logger.error(f"Error downloading Polyhaven asset: {str(e)}")
         return f"Error downloading Polyhaven asset: {str(e)}"
 
-@mcp.tool()
-async def set_texture(
+async def _set_texture(
     ctx: Context,
     object_name: str,
     texture_id: str, user_prompt: str = "") -> str:
-    """
-    Apply a previously downloaded Polyhaven texture to an object.
-
-    Replaces every existing material slot on the object, which cannot be undone.
-
-    Parameters:
-    - object_name: Name of the object to apply the texture to
-    - texture_id: ID of the Polyhaven texture to apply (must be downloaded first)
-    
-    Returns a message indicating success or failure.
-    """
+    """Apply a downloaded Poly Haven texture to an object, replacing its materials (import_asset's apply_to)."""
     try:
         # Get the global connection
         blender = get_blender_connection()
@@ -1059,59 +948,6 @@ async def set_texture(
         logger.error(f"Error applying texture: {str(e)}")
         return f"Error applying texture: {str(e)}"
 
-@mcp.tool()
-async def get_polyhaven_status(ctx: Context, user_prompt: str = "") -> str:
-    """
-    Check if PolyHaven integration is enabled in Blender.
-    Returns a message indicating whether PolyHaven features are available.
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_polyhaven_status")
-        enabled = result.get("enabled", False)
-        message = result.get("message", "")
-        if enabled:
-            message += "PolyHaven is good at Textures, and has a wider variety of textures than Sketchfab."
-        return message
-    except Exception as e:
-        logger.error(f"Error checking PolyHaven status: {str(e)}")
-        return f"Error checking PolyHaven status: {str(e)}"
-
-@mcp.tool()
-async def get_hyper3d_status(ctx: Context, user_prompt: str = "") -> str:
-    """
-    Check if Hyper3D Rodin integration is enabled in Blender.
-    Returns a message indicating whether Hyper3D Rodin features are available.
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_hyper3d_status")
-        enabled = result.get("enabled", False)
-        message = result.get("message", "")
-        if enabled:
-            message += ""
-        return message
-    except Exception as e:
-        logger.error(f"Error checking Hyper3D status: {str(e)}")
-        return f"Error checking Hyper3D status: {str(e)}"
-
-@mcp.tool()
-async def get_sketchfab_status(ctx: Context, user_prompt: str = "") -> str:
-    """
-    Check if Sketchfab integration is enabled in Blender.
-    Returns a message indicating whether Sketchfab features are available.
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_sketchfab_status")
-        enabled = result.get("enabled", False)
-        message = result.get("message", "")
-        if enabled:
-            message += "Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven."        
-        return message
-    except Exception as e:
-        logger.error(f"Error checking Sketchfab status: {str(e)}")
-        return f"Error checking Sketchfab status: {str(e)}"
 
 def _sketchfab_thumbnail(model: dict) -> str | None:
     """The smallest thumbnail at least 256px wide, else the largest there is."""
@@ -1126,24 +962,13 @@ def _sketchfab_thumbnail(model: dict) -> str | None:
     return (min(big_enough, key=width) if big_enough else max(images, key=width))["url"]
 
 
-@mcp.tool()
-async def search_sketchfab_models(
+async def _search_sketchfab(
     ctx: Context,
     query: str,
-    categories: str = None,
+    categories: str | None = None,
     count: int = 20,
     downloadable: bool = True, user_prompt: str = "") -> str:
-    """
-    Search for models on Sketchfab with optional filtering.
-
-    Parameters:
-    - query: Text to search for
-    - categories: Optional comma-separated list of categories
-    - count: Maximum number of results to return (default 20)
-    - downloadable: Whether to include only downloadable models (default True)
-
-    Returns a formatted list of matching models.
-    """
+    """search_assets(source="sketchfab"): matching models with author, licence and face count."""
     try:
         blender = get_blender_connection()
         logger.info(f"Searching Sketchfab models with query: {query}, categories: {categories}, count: {count}, downloadable: {downloadable}")
@@ -1212,80 +1037,12 @@ async def search_sketchfab_models(
         logger.error(traceback.format_exc())
         return f"Error searching Sketchfab models: {str(e)}"
 
-@mcp.tool()
-async def get_sketchfab_model_preview(
-    ctx: Context,
-    uid: str, user_prompt: str = "") -> Any:
-    """
-    Get a preview thumbnail of a Sketchfab model by its UID.
-    Use this to visually confirm a model before downloading.
-    
-    Parameters:
-    - uid: The unique identifier of the Sketchfab model (obtained from search_sketchfab_models)
-    
-    Writes the thumbnail to a file and returns its absolute path, because many
-    hosts cannot display inline image content. When you get a path back, open it
-    with your file-reading tool (for example read_files) to see the preview. Set
-    BLENDER_MCP_IMAGE_OUTPUT=inline to return the image itself instead.
-    """
-    try:
-        blender = get_blender_connection()
-        logger.info(f"Getting Sketchfab model preview for UID: {uid}")
-        
-        result = blender.send_command("get_sketchfab_model_preview", {"uid": uid})
-        
-        if result is None:
-            raise Exception("Received no response from Blender")
-        
-        if "error" in result:
-            raise Exception(result["error"])
-        
-        # Decode base64 image data
-        image_data = base64.b64decode(result["image_data"])
-        img_format = result.get("format", "jpeg")
-        
-        # Log model info
-        model_name = result.get("model_name", "Unknown")
-        author = result.get("author", "Unknown")
-        logger.info(f"Preview retrieved for '{model_name}' by {author}")
-        
-        if image_output_mode() == "inline":
-            return Image(data=image_data, format=img_format)
-        return deliver_image(
-            image_data,
-            img_format,
-            "get_sketchfab_model_preview",
-            detail=f"Sketchfab preview of '{model_name}' by {author}.",
-        )
-        
-    except Exception as e:
-        logger.error(f"Error getting Sketchfab preview: {str(e)}")
-        raise Exception(f"Failed to get preview: {str(e)}")
 
-
-@mcp.tool()
-async def download_sketchfab_model(
+async def _download_sketchfab(
     ctx: Context,
     uid: str,
     target_size: float, user_prompt: str = "") -> str:
-    """
-    Download and import a Sketchfab model by its UID.
-    The model will be scaled so its largest dimension equals target_size.
-    
-    Parameters:
-    - uid: The unique identifier of the Sketchfab model
-    - target_size: REQUIRED. The target size in Blender units/meters for the largest dimension.
-                  You must specify the desired size for the model.
-                  Examples:
-                  - Chair: target_size=1.0 (1 meter tall)
-                  - Table: target_size=0.75 (75cm tall)
-                  - Car: target_size=4.5 (4.5 meters long)
-                  - Person: target_size=1.7 (1.7 meters tall)
-                  - Small object (cup, phone): target_size=0.1 to 0.3
-    
-    Returns a message with import details including object names, dimensions, and bounding box.
-    The model must be downloadable and you must have proper access rights.
-    """
+    """import_asset(source="sketchfab"): import a model scaled so its largest side is target_size."""
     try:
         blender = get_blender_connection()
         logger.info(f"Downloading Sketchfab model: {uid}, target_size={target_size}")
@@ -1419,52 +1176,15 @@ def _polypizza_licence_id(licence):
     raise ValueError(f"Unknown Poly Pizza licence {licence!r}. Use 'CC0' or 'CC-BY'.")
 
 
-@mcp.tool()
-async def get_polypizza_status(ctx: Context, user_prompt: str = "") -> str:
-    """
-    Check if Poly Pizza integration is enabled in Blender.
-    Returns a message indicating whether Poly Pizza features are available.
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_polypizza_status")
-        enabled = result.get("enabled", False)
-        message = result.get("message", "")
-        if enabled:
-            message += (
-                " Poly Pizza is good at stylised, low-poly game assets. Everything is free under "
-                "CC0 or CC-BY, and models are far lighter geometry than Sketchfab's."
-            )
-        return message
-    except Exception as e:
-        logger.error(f"Error checking Poly Pizza status: {str(e)}")
-        return f"Error checking Poly Pizza status: {str(e)}"
 
-@mcp.tool()
-async def search_polypizza_models(
+async def _search_polypizza(
     ctx: Context,
     query: str = "",
-    category: str = None,
-    licence: str = None,
+    category: str | None = None,
+    licence: str | None = None,
     animated: bool = False,
     limit: int = 20, user_prompt: str = "") -> str:
-    """
-    Search for models on Poly Pizza with optional filtering.
-
-    Parameters:
-    - query: Text to search for. May be left empty if at least one filter is given.
-    - category: Optional category name, e.g. "Animals", "Furniture & Decor", "Transport",
-                "Nature", "Buildings", "People & Characters", "Food & Drink", "Weapons",
-                "Clutter", "Objects", "Scenes & Levels", "Other"
-    - licence: Optional licence filter, either "CC0" (no credit required) or "CC-BY"
-               (credit required)
-    - animated: When True, return only animated models (default False)
-    - limit: Maximum number of results to return (default 20, the API caps it at 32)
-
-    Returns a formatted list of matching models, with licence and triangle count on
-    every row so a low-poly, permissively licensed asset can be picked without a
-    second call.
-    """
+    """search_assets(source="polypizza"): matching models with licence and triangle count."""
     try:
         try:
             category_id = _polypizza_category_id(category)
@@ -1507,7 +1227,7 @@ async def search_polypizza_models(
         total = result.get("total", len(models))
         formatted_output = f"Found {len(models)} models (of {total} total) matching '{query or 'the given filters'}':\n\n"
         credit_note = (
-            "CC-BY models must be credited. download_polypizza_model() stores the required "
+            "CC-BY models must be credited. import_asset stores the required "
             "attribution string on the imported object as a custom property.\n"
         )
         blocks = {}
@@ -1551,35 +1271,12 @@ async def search_polypizza_models(
         return f"Error searching Poly Pizza models: {str(e)}"
 
 
-@mcp.tool()
-async def download_polypizza_model(
+async def _download_polypizza(
     ctx: Context,
     model_id: str,
     normalize_size: bool = False,
     target_size: float = 1.0, user_prompt: str = "") -> str:
-    """
-    Download and import a Poly Pizza model by its ID.
-
-    Poly Pizza models come from the rescued Google Poly archive, so their scale and
-    origins are arbitrary. Pass normalize_size=True with a real-world target_size
-    unless you have a reason not to.
-
-    Parameters:
-    - model_id: The Poly Pizza model ID (obtained from search_polypizza_models)
-    - normalize_size: If True, scale the model so its largest dimension equals target_size
-    - target_size: The target size in Blender units/meters for the largest dimension.
-                  Examples:
-                  - Chair: target_size=1.0 (1 meter tall)
-                  - Table: target_size=0.75 (75cm tall)
-                  - Car: target_size=4.5 (4.5 meters long)
-                  - Person: target_size=1.7 (1.7 meters tall)
-                  - Small object (cup, phone): target_size=0.1 to 0.3
-
-    Returns a message with import details including object names, dimensions, bounding
-    box, and the attribution string, which is also written onto each imported root
-    object as the custom properties polypizza_attribution, polypizza_id and
-    polypizza_licence.
-    """
+    """import_asset(source="polypizza"): import a model and record its attribution on it."""
     try:
         blender = get_blender_connection()
         logger.info(
@@ -1646,473 +1343,440 @@ async def download_polypizza_model(
         logger.error(traceback.format_exc())
         return f"Error downloading Poly Pizza model: {str(e)}"
 
-def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
-    if original_bbox is None:
-        return None
-    if any(i<=0 for i in original_bbox):
-        raise ValueError("Incorrect number range: bbox must be bigger than zero!")
-    if all(isinstance(i, int) for i in original_bbox):
-        return original_bbox
-    return [int(float(i) / max(original_bbox) * 100) for i in original_bbox] if original_bbox else None
 
-@mcp.tool()
-async def generate_hyper3d_model_via_text(
+# The model-facing tool surface. Each tool covers a job the model can't do
+# with execute_blender_code alone: seeing the scene (look), paid and keyed
+# services (generate_3d, search_assets, import_asset), and craft knowledge it
+# loads only when needed (get_guide). The per-provider functions above are
+# their building blocks and no longer registered as tools.
+
+LOOK_MODES = ("viewport", "camera", "angles", "frames")
+LOOK_ANGLES = ("front", "back", "left", "right", "top", "three_quarter")
+LOOK_SHADING = ("solid", "material", "rendered", "wireframe", "xray")
+# Modes before the shading/stats split, so a model trained on them gets pointed the right way.
+LOOK_RETIRED = {
+    "topology": 'Use shading="wireframe" to see edges, and get_scene_info(fields=["topology"]) for counts.',
+    "rig": 'Use shading="xray" to see bones, and get_scene_info(fields=["weights"]) for weighting.',
+    "image": 'Pass image= on its own, e.g. look(image="Render Result").',
+}
+
+
+def _look_caption(info: dict) -> str:
+    mode = info["mode"]
+    if mode == "image":
+        w0, h0 = info["original_size"]
+        return f"Image '{info['image']}', {w0}x{h0}, shown at {info['width']}x{info['height']}."
+    parts = []
+    if mode == "angles":
+        parts.append("Tiles left to right, top to bottom: " + ", ".join(info.get("views", [])) + ".")
+    if mode == "frames":
+        parts.append("Frames left to right, top to bottom: " + ", ".join(map(str, info.get("frames", []))) + ".")
+    if mode == "camera":
+        parts.append(f"Through camera '{info.get('camera')}'.")
+    if mode != "viewport":
+        size = " x ".join(f"{v:g}" for v in info.get("size", []))
+        parts.append(f"Framed {info.get('targets', 0)} objects, {size} m across, centred at {info.get('center')}.")
+    return " ".join(parts)
+
+
+@mcp.tool(meta={"ui": {"resourceUri": VIEWPORT_URI}})
+async def look(
     ctx: Context,
-    text_prompt: str,
-    bbox_condition: list[float]=None, user_prompt: str = "") -> str:
+    mode: str | None = None,
+    target: list[str] | None = None,
+    views: list[str | list[float]] | None = None,
+    distance: float | None = None,
+    shading: str | None = None,
+    frames: list[int] | None = None,
+    frame_count: int = 6,
+    view: str | list[float] | None = None,
+    image: str | None = None,
+    max_size: int = 768,
+    user_prompt: str = "",
+) -> CallToolResult:
     """
-    Generate 3D asset using Hyper3D by giving description of the desired asset, and import the asset into Blender.
-    The 3D asset has built-in materials.
-    The generated model has a normalized size, so re-scaling after generation can be useful.
+    See the scene as one image. For counts, sizes and positions, use get_scene_info.
+
+    Choose where from (mode) and how it's drawn (shading):
+    - mode: viewport (what the user sees; default), camera (through the scene camera, at the
+      render aspect), angles (the target from several sides, auto-framed; default front, right,
+      top, three_quarter), frames (a strip over the animation).
+    - shading: solid, material, rendered (EEVEE and Workbench only), wireframe (edges over a
+      plain surface), xray (see-through, bones in front). Default: the viewport's.
+    - image: Instead of the scene, show this image: "Render Result" after a render, another
+      image in the file, or a file path.
 
     Parameters:
-    - text_prompt: A short description of the desired model in **English**.
-    - bbox_condition: Optional. If given, it has to be a list of floats of length 3. Controls the ratio between [Length, Width, Height] of the model.
+    - target: Object names to frame (children included). Default: every visible object.
+    - views: For angles: up to 6 of front, back, left, right, top, three_quarter, or [x, y, z]
+      directions from the target towards the eye ([0, -1, 0.2] is front, slightly above).
+    - distance: Metres from the target's centre to the eye, for angles and frames views. Default:
+      far enough to fit it; closer for detail or to stand inside a room.
+    - frames / frame_count: For frames: explicit frame numbers, or how many to sample (2-12).
+    - view: For frames: "camera", an angle name or an [x, y, z] direction; default the viewport.
+    - max_size: Longest side in pixels (default 768). Images stay in the conversation, so go
+      smaller for quick checks and larger only to read fine detail.
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
 
-    Returns a message indicating success or failure.
+    Every setting changed to take the picture is restored afterwards.
     """
+    if mode in LOOK_RETIRED:
+        return _app_error(f"There is no {mode} mode. {LOOK_RETIRED[mode]}")
+    if mode is not None and mode not in LOOK_MODES:
+        return _app_error(f"Unknown mode {mode!r}. Use one of: {', '.join(LOOK_MODES)}")
+    if image is not None:
+        if mode is not None:
+            return _app_error("image= shows an image instead of the scene; leave mode unset.")
+        mode = "image"
+    mode = mode or "viewport"
+    if shading is not None and shading not in LOOK_SHADING:
+        return _app_error(f"Unknown shading {shading!r}. Use one of: {', '.join(LOOK_SHADING)}")
+    for v in (views or []) + ([view] if view is not None and view != "camera" else []):
+        if isinstance(v, str) and v not in LOOK_ANGLES:
+            return _app_error(f"Unknown view {v!r}. Use one of {', '.join(LOOK_ANGLES)} or an [x, y, z] direction.")
+        if not isinstance(v, str) and (len(v) != 3 or not any(v)):
+            return _app_error(f"A view direction is three numbers, not all zero; got {v!r}.")
+    args = {"mode": mode, "target": target, "views": views, "distance": distance, "shading": shading,
+            "frames": frames, "frame_count": frame_count, "view": view, "image": image,
+            "max_size": max(200, min(int(max_size or 768), 2000))}
+
+    def native():
+        return _viewport_screenshot(ctx, max_size=max_size, user_prompt=user_prompt)
+
+    def scripted():
+        return _look_via_script(args)
+
+    # The plain viewport has a native command; everything else is a script.
+    # Each falls back to the other, since old addons may have only one of them.
+    first, second = (native, scripted) if mode == "viewport" and not shading else (scripted, native)
     try:
-        blender = get_blender_connection()
-        result = blender.send_command("create_rodin_job", {
-            "text_prompt": text_prompt,
-            "images": None,
-            "bbox_condition": _process_bbox(bbox_condition),
-        })
-        succeed = result.get("submit_time", False)
-        if succeed:
-            return json.dumps({
-                "task_uuid": result["uuid"],
-                "subscription_key": result["jobs"]["subscription_key"],
-            })
-        else:
-            return json.dumps(result)
+        return first()
+    except _LookRefused as e:
+        return _app_error(str(e))
     except Exception as e:
-        logger.error(f"Error generating Hyper3D task: {str(e)}")
-        return f"Error generating Hyper3D task: {str(e)}"
+        reason = str(e)
+    if mode == "image":
+        # The viewport is no stand-in for the image that was asked for.
+        hint = f" {ADDON_UPDATE_HINT}" if _addon_outdated() and ADDON_UPDATE_HINT not in reason else ""
+        return _app_error(f"Couldn't show the image: {reason}{hint}")
+    try:
+        result = second()
+    except Exception as e:
+        hint = f" {ADDON_UPDATE_HINT}" if _addon_outdated() and ADDON_UPDATE_HINT not in reason else ""
+        return _app_error(f"Couldn't capture the view: {reason}{hint}")
+    if second is native:
+        note = f"look(mode=\"{mode}\") isn't available here ({reason}), so this is the plain viewport."
+        result.content.append(TextContent(type="text", text=note))
+    return result
+
+
+class _LookRefused(Exception):
+    """A mistake in the request (a missing object, no camera): report it, don't fall back."""
+
+
+def _look_via_script(args: dict) -> CallToolResult:
+    path = os.path.join(tempfile.gettempdir(), f"blender_look_{os.getpid()}.png")
+    info = _run_script(blender_scripts.LOOK, {**args, "filepath": path})
+    if info.get("error"):
+        raise _LookRefused(info["error"])
+    with open(path, "rb") as f:
+        png = f.read()
+    os.remove(path)
+    return CallToolResult(content=[_png_content(png), TextContent(type="text", text=_look_caption(info))])
+
+
+def _generation_send(command: str, params: dict):
+    try:
+        return get_blender_connection().send_command(command, params)
+    except Exception as e:
+        if _addon_lacks(e):
+            label = "Hunyuan3D" if "hunyuan" in command else "Hyper3D Rodin"
+            raise generation.Unsupported(missing_feature(label, label))
+        raise
+
+
+def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
+    enabled = {}
+    for name, command in (("hunyuan3d", "get_hunyuan3d_status"), ("hyper3d", "get_hyper3d_status")):
+        try:
+            enabled[name] = bool(blender.send_command(command).get("enabled"))
+        except Exception:
+            enabled[name] = False
+    return enabled
+
+
+def _pending_generations() -> "generation.Pending":
+    return generation.Pending(context_log.context_log_path().with_name("pending-generations.json"))
+
+
+async def _generation_reply(ctx: Context, job: "generation.Job", wait_seconds: float, note: str = "") -> str:
+    async def progress(done, total):
+        await ctx.report_progress(done, total)
+
+    imported, detail = await generation.wait_and_import(
+        _generation_send, job, wait_seconds, progress, pending=_pending_generations())
+    if not imported:
+        return f"Still generating ({detail}). {job.resume_hint}{note}"
+    reply = f"Generated and imported '{job.name}' with {job.provider}."
+    try:
+        bounds = _run_script(blender_scripts.BOUNDS, {"names": [job.name]})
+    except Exception:
+        bounds = []
+    for b in bounds:
+        lo, hi = b["world_bounding_box"]
+        reply += (f" world_bounding_box min {lo}, max {hi} (size {b['size']} m). Generated models have "
+                  "arbitrary scale and facing: scale it to real size, put its lowest point on the ground, "
+                  "rotate it to face the right way, then look(mode=\"angles\", target=[\"" + b["name"] + "\"]).")
+    return reply + note
+
 
 @mcp.tool()
-async def generate_hyper3d_model_via_images(
+async def generate_3d(
     ctx: Context,
-    input_image_paths: list[str]=None,
-    input_image_urls: list[str]=None,
-    bbox_condition: list[float]=None, user_prompt: str = "") -> str:
-    """
-    Generate 3D asset using Hyper3D by giving images of the wanted asset, and import the generated asset into Blender.
-    The 3D asset has built-in materials.
-    The generated model has a normalized size, so re-scaling after generation can be useful.
-    
-    Parameters:
-    - input_image_paths: The **absolute** paths of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in MAIN_SITE mode.
-    - input_image_urls: The URLs of input images. Even if only one image is provided, wrap it into a list. Required if Hyper3D Rodin in FAL_AI mode.
-    - bbox_condition: Optional. If given, it has to be a list of ints of length 3. Controls the ratio between [Length, Width, Height] of the model.
-
-    Only one of {input_image_paths, input_image_urls} should be given at a time, depending on the Hyper3D Rodin's current mode.
-    Returns a message indicating success or failure.
-    """
-    if input_image_paths is not None and input_image_urls is not None:
-        return f"Error: Conflict parameters given!"
-    if input_image_paths is None and input_image_urls is None:
-        return f"Error: No image given!"
-    if input_image_paths is not None:
-        if not all(os.path.exists(i) for i in input_image_paths):
-            return "Error: not all image paths are valid!"
-        images = []
-        for path in input_image_paths:
-            with open(path, "rb") as f:
-                images.append(
-                    (Path(path).suffix, base64.b64encode(f.read()).decode("ascii"))
-                )
-    elif input_image_urls is not None:
-        if not all(urlparse(i) for i in input_image_paths):
-            return "Error: not all image URLs are valid!"
-        images = input_image_urls.copy()
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("create_rodin_job", {
-            "text_prompt": None,
-            "images": images,
-            "bbox_condition": _process_bbox(bbox_condition),
-        })
-        succeed = result.get("submit_time", False)
-        if succeed:
-            return json.dumps({
-                "task_uuid": result["uuid"],
-                "subscription_key": result["jobs"]["subscription_key"],
-            })
-        else:
-            return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error generating Hyper3D task: {str(e)}")
-        return f"Error generating Hyper3D task: {str(e)}"
-
-@mcp.tool()
-async def poll_rodin_job_status(
-    ctx: Context,
-    subscription_key: str=None,
-    request_id: str=None,
-):
-    """
-    Check if the Hyper3D Rodin generation task is completed.
-
-    For Hyper3D Rodin mode MAIN_SITE:
-        Parameters:
-        - subscription_key: The subscription_key given in the generate model step.
-
-        Returns a list of status. The task is done if all status are "Done".
-        If "Failed" showed up, the generating process failed.
-        This is a polling API, so only proceed if the status are finally determined ("Done" or "Canceled").
-
-    For Hyper3D Rodin mode FAL_AI:
-        Parameters:
-        - request_id: The request_id given in the generate model step.
-
-        Returns the generation task status. The task is done if status is "COMPLETED".
-        The task is in progress if status is "IN_PROGRESS".
-        If status other than "COMPLETED", "IN_PROGRESS", "IN_QUEUE" showed up, the generating process might be failed.
-        This is a polling API, so only proceed if the status are finally determined ("COMPLETED" or some failed state).
-    """
-    try:
-        blender = get_blender_connection()
-        kwargs = {}
-        if subscription_key:
-            kwargs = {
-                "subscription_key": subscription_key,
-            }
-        elif request_id:
-            kwargs = {
-                "request_id": request_id,
-            }
-        result = blender.send_command("poll_rodin_job_status", kwargs)
-        return result
-    except Exception as e:
-        logger.error(f"Error generating Hyper3D task: {str(e)}")
-        return f"Error generating Hyper3D task: {str(e)}"
-
-@mcp.tool()
-async def import_generated_asset(
-    ctx: Context,
-    name: str,
-    task_uuid: str=None,
-    request_id: str=None,
-):
-    """
-    Import the asset generated by Hyper3D Rodin after the generation task is completed.
-
-    Parameters:
-    - name: The name of the object in scene
-    - task_uuid: For Hyper3D Rodin mode MAIN_SITE: The task_uuid given in the generate model step.
-    - request_id: For Hyper3D Rodin mode FAL_AI: The request_id given in the generate model step.
-
-    Only give one of {task_uuid, request_id} based on the Hyper3D Rodin Mode!
-    Return if the asset has been imported successfully.
-    """
-    try:
-        blender = get_blender_connection()
-        kwargs = {
-            "name": name
-        }
-        if task_uuid:
-            kwargs["task_uuid"] = task_uuid
-        elif request_id:
-            kwargs["request_id"] = request_id
-        result = blender.send_command("import_generated_asset", kwargs)
-        return result
-    except Exception as e:
-        logger.error(f"Error generating Hyper3D task: {str(e)}")
-        return f"Error generating Hyper3D task: {str(e)}"
-
-@mcp.tool()
-def get_hunyuan3d_status(ctx: Context, user_prompt: str = "") -> str:
-    """
-    Check if Hunyuan3D integration is enabled in Blender.
-    Returns a message indicating whether Hunyuan3D features are available.
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("get_hunyuan3d_status")
-        message = result.get("message", "")
-        return message
-    except Exception as e:
-        logger.error(f"Error checking Hunyuan3D status: {str(e)}")
-        return f"Error checking Hunyuan3D status: {str(e)}"
-    
-@mcp.tool()
-async def generate_hunyuan3d_model(
-    ctx: Context,
-    text_prompt: str = None,
-    input_image_url: str = None, user_prompt: str = "") -> str:
-    """
-    Generate 3D asset using Hunyuan3D by providing either text description, image reference, 
-    or both for the desired asset, and import the asset into Blender.
-    The 3D asset has built-in materials.
-    
-    Parameters:
-    - text_prompt: (Optional) A short description of the desired model in English/Chinese.
-    - input_image_url: (Optional) The local or remote url of the input image. Accepts None if only using text prompt.
-
-    Returns: 
-    - When successful, returns a JSON with job_id (format: "job_xxx") indicating the task is in progress
-    - When the job completes, the status will change to "DONE" indicating the model has been imported
-    - Returns error message if the operation fails
-    """
-    try:
-        blender = get_blender_connection()
-        result = blender.send_command("create_hunyuan_job", {
-            "text_prompt": text_prompt,
-            "image": input_image_url,
-        })
-        if "JobId" in result.get("Response", {}):
-            job_id = result["Response"]["JobId"]
-            formatted_job_id = f"job_{job_id}"
-            return json.dumps({
-                "job_id": formatted_job_id,
-            })
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error generating Hunyuan3D task: {str(e)}")
-        return f"Error generating Hunyuan3D task: {str(e)}"
-    
-@mcp.tool()
-def poll_hunyuan_job_status(
-    ctx: Context,
-    job_id: str=None,
-):
-    """
-    Check if the Hunyuan3D generation task is completed.
-
-    For Hunyuan3D:
-        Parameters:
-        - job_id: The job_id given in the generate model step.
-
-        Returns the generation task status. The task is done if status is "DONE".
-        The task is in progress if status is "RUN".
-        If status is "DONE", returns ResultFile3Ds with one or more downloadable model URLs.
-        Prefer a .glb URL when present (self-contained with materials); otherwise use a .zip/.obj asset URL.
-        This is a polling API, so only proceed if the status are finally determined ("DONE" or some failed state).
-    """
-    try:
-        blender = get_blender_connection()
-        kwargs = {
-            "job_id": job_id,
-        }
-        result = blender.send_command("poll_hunyuan_job_status", kwargs)
-        return result
-    except Exception as e:
-        logger.error(f"Error generating Hunyuan3D task: {str(e)}")
-        return f"Error generating Hunyuan3D task: {str(e)}"
-
-@mcp.tool()
-async def import_generated_asset_hunyuan(
-    ctx: Context,
-    name: str,
-    zip_file_url: str,
-):
-    """
-    Import the asset generated by Hunyuan3D after the generation task is completed.
-
-    Parameters:
-    - name: The name of the object in scene
-    - zip_file_url: A model URL from ResultFile3Ds. Prefer a .glb URL when available; .zip/.obj URLs still work as a fallback.
-
-    Return if the asset has been imported successfully.
-    """
-    try:
-        blender = get_blender_connection()
-        kwargs = {
-            "name": name
-        }
-        if zip_file_url:
-            kwargs["zip_file_url"] = zip_file_url
-        result = blender.send_command("import_generated_asset_hunyuan", kwargs)
-        return result
-    except Exception as e:
-        logger.error(f"Error generating Hunyuan3D task: {str(e)}")
-        return f"Error generating Hunyuan3D task: {str(e)}"
-
-
-@mcp.tool()
-async def export_scene(
-    ctx: Context,
-    filepath: str,
-    format: str = "glb",
-    object_names: list[str] = None,
-    selection_only: bool = False,
-    apply_modifiers: bool = True,
+    prompt: str | None = None,
+    image: str | None = None,
+    name: str | None = None,
+    provider: str = "auto",
+    quality: str | None = None,
+    bbox_condition: list[float] | None = None,
+    job: str | None = None,
+    wait_seconds: int = 50,
     user_prompt: str = "",
 ) -> str:
     """
-    Export the whole scene, the current selection, or named objects to a GLB or FBX file on disk,
-    so another application (a game engine, a viewer, a converter) can pick it up.
+    Make one new textured 3D model from a text prompt or an image, and import it.
+
+    One object per call: not a whole scene, the ground, or parts to assemble. It arrives at
+    arbitrary scale and facing. Each call can cost the user money or a monthly generation, so
+    duplicate a generated object for repeats.
+
+    Waits up to wait_seconds (at most 45), then imports. Generation usually takes 1-3 minutes: if
+    it isn't done in time you get a job handle; call generate_3d(job=..., name=...) again to keep
+    waiting. Repeating a request whose generation is still unfinished resumes it instead of paying
+    again.
 
     Parameters:
-    - filepath: Absolute path of the file to write (.glb or .fbx). Parent folders are created.
-    - format: "glb" (default; keeps PBR materials, emission, skins, shape keys, animation) or "fbx".
-    - object_names: Export only these objects (children included). Omit for selection_only or the whole scene.
-    - selection_only: Export what is currently selected in Blender (ignored when object_names is given).
-    - apply_modifiers: Bake modifiers on export. Use false for rigged / shape-key meshes.
-
-    Returns JSON with path, bytes, selection_only and the exported object names.
+    - prompt: Short English description of one object ("weathered wooden treasure chest").
+    - image: Instead of a prompt: an absolute image file path or an http(s) URL. Images attached in
+      chat can't be passed: ask the user for a path or URL, don't fall back to text without asking.
+    - name: Object name in the scene. Defaults to one made from the prompt.
+    - provider: auto (default), hunyuan3d or hyper3d. Auto picks the first enabled generator.
+    - quality: "standard" or "high". Omit for the provider default; "high" only when the user
+      asks for more detail.
+    - bbox_condition: hyper3d only: [length, width, height] proportions.
+    - job: A handle from an earlier call, to resume waiting for it.
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
     """
+    if quality not in (None, "standard", "high"):
+        return "Error: quality must be 'standard' or 'high'"
+    call_start = time.monotonic()
+    wait_seconds = max(10, min(int(wait_seconds or 50), generation.MAX_CALL_S))
     try:
+        if job:
+            return await _generation_reply(ctx, generation.Job.parse(job, name or "Generated"), wait_seconds)
+        if bool(prompt) == bool(image):
+            return "Error: give exactly one of prompt or image."
         blender = get_blender_connection()
-        result = blender.send_command("export_scene", {
-            "filepath": filepath,
-            "format": format,
-            "object_names": object_names,
-            "selection_only": selection_only,
-            "apply_modifiers": apply_modifiers,
-        })
-        return json.dumps(result) if isinstance(result, dict) else result
+        chosen = generation.choose_provider(provider, _own_key_generators(blender))
+        note = ""
+        pending = _pending_generations()
+        key = generation.request_key(chosen, prompt, image, quality, bbox_condition)
+        started = pending.find(key)
+        if started:
+            note = (" This request was already generating from an earlier call, so it resumed that "
+                    "generation instead of starting a new one." + note)
+        else:
+            started = generation.submit(
+                _generation_send, chosen, name or generation.default_name(prompt), prompt, image, quality,
+                bbox_condition, supports_quality=(_addon_protocol() or 0) >= 11)
+            if isinstance(started, str):
+                return started + note
+            pending.add(key, started)
+        # Submitting (an image upload, say) spends the same client timeout as waiting.
+        remaining = wait_seconds - (time.monotonic() - call_start)
+        return await _generation_reply(ctx, started, remaining, note)
+    except generation.GenerationError as e:
+        return f"Error: {e}"
     except Exception as e:
-        logger.error(f"Error exporting scene: {str(e)}")
-        return f"Error exporting scene: {str(e)}"
+        logger.error(f"Error generating model: {e}")
+        return f"Error generating model: {e}"
+
+
+ASSET_SOURCES = ("polyhaven", "sketchfab", "polypizza")
+
+
+def _unavailable(source: str, e: Exception, action: str) -> str:
+    if _addon_lacks(e):
+        label = {"polyhaven": "Poly Haven", "sketchfab": "Sketchfab", "polypizza": "Poly Pizza"}[source]
+        return missing_feature(f"{label} {action}", label)
+    return f"Error: {e}"
+
+
+def _preview_images(source: str, listing: str, count: int) -> list[ImageContent]:
+    """Thumbnails of the first `count` results, read off the listing's ids."""
+    pattern = {"polyhaven": r"\(ID: ([^)]+)\)", "sketchfab": r"\(UID: ([^)]+)\)"}.get(source)
+    if not pattern or count <= 0:
+        return []
+    command = {"polyhaven": "get_polyhaven_asset_preview", "sketchfab": "get_sketchfab_model_preview"}[source]
+    key = {"polyhaven": "asset_id", "sketchfab": "uid"}[source]
+    images = []
+    for ident in re.findall(pattern, listing)[:count]:
+        try:
+            result = get_blender_connection().send_command(command, {key: ident}, read_only=True)
+            images.append(ImageContent(type="image", data=result["image_data"],
+                                       mimeType=f"image/{result.get('format', 'png').replace('jpg', 'jpeg')}"))
+        except Exception as e:
+            logger.debug(f"Preview of {ident} failed: {e}")
+    return images
 
 
 @mcp.tool()
-def record_trajectory_feedback(
+async def search_assets(
     ctx: Context,
-    feedback: str,
-    correction_text: str = None,
-    step_index: int = None,
+    source: str,
+    query: str = "",
+    asset_type: str = "all",
+    category: str | None = None,
+    attributes: dict | None = None,
+    min_size_m: float | None = None,
+    licence: str | None = None,
+    animated: bool = False,
+    limit: int = 20,
+    previews: int = 0,
+    user_prompt: str = "",
+):
+    """
+    Search a library of existing assets. The sources:
+    - polyhaven: HDRIs, PBR textures and realistic models, all CC0. Search understands intent and
+      synonyms ("couch" finds sofas).
+    - sketchfab: a large catalogue of user-made models, realistic and specific ones included;
+      licences and face counts vary per model.
+    - polypizza: stylised low-poly models, CC0 or CC-BY (credit the creator).
+
+    Parameters:
+    - source: polyhaven, sketchfab or polypizza.
+    - query: What you're looking for, in plain words.
+    - asset_type: polyhaven only: hdris, textures, models or all.
+    - category: Optional. polyhaven: a category path ("Metal/Sheet & Corrugated"). sketchfab:
+      comma-separated categories. polypizza: e.g. "Furniture & Decor", "Nature", "Animals".
+    - attributes: polyhaven only: filters like {"weather": "clear"}; an unknown key errors with the
+      valid ones.
+    - min_size_m: polyhaven only: minimum real-world size in metres. Use 2+ for walls, floors and
+      ground so textures don't visibly repeat.
+    - licence: polypizza only: "CC0" or "CC-BY".
+    - animated: polypizza only: animated models only.
+    - limit: Number of results.
+    - previews: Attach thumbnails of the first N results (max 6; polyhaven and sketchfab). Cheaper
+      than importing the wrong asset.
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
+
+    Results include each asset's id; pass it to import_asset.
+    """
+    source = (source or "").lower()
+    if source not in ASSET_SOURCES:
+        return f"Error: source must be one of {', '.join(ASSET_SOURCES)}"
+    limit = max(1, min(int(limit or 20), 50))
+    try:
+        if source == "polyhaven":
+            listing = await _search_polyhaven(
+                ctx, query=query or None, asset_type=asset_type, category=category, attributes=attributes,
+                min_size_m=min_size_m, limit=limit, user_prompt=user_prompt)
+        elif source == "sketchfab":
+            if not query:
+                return "Error: sketchfab needs a query."
+            listing = await _search_sketchfab(
+                ctx, query=query, categories=category, count=limit, user_prompt=user_prompt)
+        else:
+            listing = await _search_polypizza(
+                ctx, query=query, category=category, licence=licence, animated=animated, limit=limit,
+                user_prompt=user_prompt)
+    except Exception as e:
+        return _unavailable(source, e, "search")
+    if listing.lower().startswith("error") and _addon_lacks(listing):
+        return _unavailable(source, Exception(listing), "search")
+    images = _preview_images(source, listing, max(0, min(int(previews or 0), 6)))
+    if not images:
+        return listing
+    return CallToolResult(content=[TextContent(type="text", text=listing), *images])
+
+
+@mcp.tool()
+async def import_asset(
+    ctx: Context,
+    source: str,
+    id: str,
+    asset_type: str | None = None,
+    target_size: float | None = None,
+    apply_to: list[str] | None = None,
+    resolution: str = "1k",
+    file_format: str | None = None,
     user_prompt: str = "",
 ) -> str:
     """
-    DEPRECATED: Telemetry/analytics not in this fork.
+    Download an asset found with search_assets and bring it into the scene.
 
-    Trajectory capture does not exist here, so there is no step to attach
-    feedback to. Kept as a no-op so existing client prompts that reference it
-    still resolve.
+    Parameters:
+    - source: polyhaven, sketchfab or polypizza.
+    - id: The asset's id (UID for sketchfab) from search_assets.
+    - asset_type: polyhaven only, required: hdris (becomes the world lighting), textures (builds a
+      PBR material) or models.
+    - target_size: Size in metres of the model's largest dimension (chair 1.0, car 4.5, cup 0.12).
+      Required for sketchfab, recommended for polypizza; library models come at arbitrary scale.
+    - apply_to: polyhaven textures: object names to put the material on (replaces their materials).
+      Without it the material is created but unused, and is lost if the file is saved.
+    - resolution: polyhaven: 1k, 2k, 4k or 8k. 1k-2k for background, 4k for close-ups.
+    - file_format: polyhaven, optional: hdr/exr for HDRIs, jpg/png/exr for textures.
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
+
+    Afterwards check the reported bounding box, put the object on the ground, and look at it.
     """
-    return "Not recorded: telemetry and analytics are not part of this fork."
+    source = (source or "").lower()
+    if source not in ASSET_SOURCES:
+        return f"Error: source must be one of {', '.join(ASSET_SOURCES)}"
+    reply = await _import_asset(ctx, source, id, asset_type, target_size, apply_to, resolution, file_format,
+                                user_prompt)
+    # The download helpers report failures as text, so an unknown command arrives inside it.
+    if reply.lower().startswith("error") and _addon_lacks(reply):
+        return _unavailable(source, Exception(reply), "import")
+    # Old addons can fail on a newer Blender (removed node types and the like).
+    if "error" in reply.lower() and _addon_outdated() and ADDON_UPDATE_HINT not in reply:
+        reply += f"\n\nThe Blender addon is out of date, which may be the cause. {ADDON_UPDATE_HINT}"
+    return reply
 
 
-@mcp.prompt()
-def asset_creation_strategy() -> str:
-    """Defines the preferred strategy for creating assets in Blender"""
-    return """When creating 3D content in Blender, always start by checking if integrations are available:
+async def _import_asset(ctx, source, id, asset_type, target_size, apply_to, resolution, file_format,
+                        user_prompt) -> str:
+    try:
+        if source == "polyhaven":
+            if asset_type not in ("hdris", "textures", "models"):
+                return "Error: polyhaven needs asset_type: hdris, textures or models."
+            reply = await _download_polyhaven(
+                ctx, asset_id=id, asset_type=asset_type, resolution=resolution, file_format=file_format,
+                user_prompt=user_prompt)
+            if asset_type == "textures" and apply_to and not reply.lower().startswith(("error", "failed")):
+                applied = []
+                for object_name in apply_to:
+                    result = await _set_texture(ctx, object_name=object_name, texture_id=id, user_prompt=user_prompt)
+                    applied.append(result.splitlines()[0] if result else f"{object_name}: no reply")
+                applied_note = "Applied:\n" + "\n".join(applied) + "\n"
+                reply = reply.replace(" " + POLYHAVEN_UNUSED_NOTE + " ", "\n" + applied_note)
+                reply = reply.replace(" " + POLYHAVEN_UNUSED_NOTE, "\n" + applied_note)
+            return reply
+        if source == "sketchfab":
+            if not target_size:
+                return "Error: sketchfab needs target_size (metres, largest dimension)."
+            return await _download_sketchfab(ctx, uid=id, target_size=target_size, user_prompt=user_prompt)
+        return await _download_polypizza(
+            ctx, model_id=id, normalize_size=bool(target_size), target_size=target_size or 1.0,
+            user_prompt=user_prompt)
+    except Exception as e:
+        return _unavailable(source, e, "import")
 
-    0. Before anything, always check the scene from get_scene_info()
-    
-    **IMPORTANT: Visual Verification**
-    - Use get_viewport_screenshot() BEFORE making changes to see the current state
-    - Use get_viewport_screenshot() AFTER executing code or importing assets to verify the result
-    - This helps confirm your changes worked as expected and catch any visual issues
 
-    1. First use the following tools to verify if the following integrations are enabled:
-        1. PolyHaven
-            Use get_polyhaven_status() to verify its status
-            If PolyHaven is enabled:
-            - For objects/models: Use download_polyhaven_asset() with asset_type="models"
-            - For materials/textures: Use download_polyhaven_asset() with asset_type="textures"
-            - For environment lighting: Use download_polyhaven_asset() with asset_type="hdris"
-        2. Sketchfab
-            Sketchfab is good at Realistic models, and has a wider variety of models than PolyHaven.
-            Use get_sketchfab_status() to verify its status
-            If Sketchfab is enabled:
-            - For objects/models: First search using search_sketchfab_models() with your query
-            - Then download specific models using download_sketchfab_model() with the UID
-            - Note that only downloadable models can be accessed, and API key must be properly configured
-            - Sketchfab has a wider variety of models than PolyHaven, especially for specific subjects
-        3. Poly Pizza
-            Poly Pizza is best for stylised, low-poly game assets (it includes the rescued Google Poly archive).
-            Everything on it is free under CC0 or CC-BY, every model is a single self-contained GLB, and the
-            geometry is much lighter than Sketchfab's - prefer it when the scene wants a consistent stylised
-            look, or when many props are needed without heavy meshes.
-            Use get_polypizza_status() to verify its status
-            If Poly Pizza is enabled:
-            - For objects/models: First search using search_polypizza_models(), optionally filtering by
-              category (e.g. "Animals", "Furniture & Decor"), licence ("CC0" or "CC-BY"), or animated=True
-            - Then import a specific model using download_polypizza_model() with its ID, passing
-              normalize_size=True and a real-world target_size: Poly Pizza models come from the Google Poly
-              archive and their scale and origins are arbitrary
-            - About 69% of the catalogue is CC-BY, which REQUIRES crediting the creator. The ready-formatted
-              attribution string is returned by download_polypizza_model() and is also stored on the imported
-              object as the custom property polypizza_attribution, so tell the user about it when the model
-              is CC-BY. Filter with licence="CC0" if you want models that need no credit.
-        4. Hyper3D(Rodin)
-            Hyper3D Rodin is good at generating 3D models for single item.
-            So don't try to:
-            1. Generate the whole scene with one shot
-            2. Generate ground using Hyper3D
-            3. Generate parts of the items separately and put them together afterwards
+# Guides (guides/, guides.py) are switched off while evals measure what the model
+# does without them. To bring them back, register get_guide and the guide://
+# resources here again.
 
-            Use get_hyper3d_status() to verify its status
-            If Hyper3D is enabled:
-            - For objects/models, do the following steps:
-                1. Create the model generation task
-                    - Use generate_hyper3d_model_via_images() if image(s) is/are given
-                    - Use generate_hyper3d_model_via_text() if generating 3D asset using text prompt
-                    If key type is free_trial and insufficient balance error returned, tell the user that the free trial key can only generated limited models everyday, they can choose to:
-                    - Wait for another day and try again
-                    - Go to hyper3d.ai to find out how to get their own API key
-                    - Go to fal.ai to get their own private API key
-                2. Poll the status
-                    - Use poll_rodin_job_status() to check if the generation task has completed or failed
-                3. Import the asset
-                    - Use import_generated_asset() to import the generated GLB model the asset
-                4. After importing the asset, ALWAYS check the world_bounding_box of the imported mesh, and adjust the mesh's location and size
-                    Adjust the imported mesh's location, scale, rotation, so that the mesh is on the right spot.
-
-                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-        5. Hunyuan3D
-            Hunyuan3D is good at generating 3D models for single item.
-            So don't try to:
-            1. Generate the whole scene with one shot
-            2. Generate ground using Hunyuan3D
-            3. Generate parts of the items separately and put them together afterwards
-
-            Use get_hunyuan3d_status() to verify its status
-            If Hunyuan3D is enabled:
-                if Hunyuan3D mode is "OFFICIAL_API":
-                    - For objects/models, do the following steps:
-                        1. Create the model generation task
-                            - Use generate_hunyuan3d_model by providing either a **text description** OR an **image(local or urls) reference**.
-                            - Go to cloud.tencent.com out how to get their own SecretId and SecretKey
-                        2. Poll the status
-                            - Use poll_hunyuan_job_status() to check if the generation task has completed or failed
-                        3. Import the asset
-                            - Use import_generated_asset_hunyuan() with a ResultFile3Ds URL (prefer .glb, else .zip/.obj)
-                    if Hunyuan3D mode is "LOCAL_API":
-                        - For objects/models, do the following steps:
-                        1. Create the model generation task
-                            - Use generate_hunyuan3d_model if image (local or urls)  or text prompt is given and import the asset
-
-                You can reuse assets previous generated by running python code to duplicate the object, without creating another generation task.
-
-    3. Always check the world_bounding_box for each item so that:
-        - Ensure that all objects that should not be clipping are not clipping.
-        - Items have right spatial relationship.
-    
-    4. Recommended asset source priority:
-        - For specific existing objects: First try Sketchfab, then PolyHaven
-        - For stylised or low-poly game assets: First try Poly Pizza, then Sketchfab
-        - For generic objects/furniture: First try PolyHaven, then Sketchfab
-        - For custom or unique items not available in libraries: Use Hyper3D Rodin or Hunyuan3D
-        - For environment lighting: Use PolyHaven HDRIs
-        - For materials/textures: Use PolyHaven textures
-
-    Only fall back to scripting when:
-    - PolyHaven, Sketchfab, Poly Pizza, Hyper3D, and Hunyuan3D are all disabled
-    - A simple primitive is explicitly requested
-    - No suitable asset exists in any of the libraries
-    - Hyper3D Rodin or Hunyuan3D failed to generate the desired asset
-    - The task specifically requires a basic material/color
-
-    **Best Practices:**
-    - Always take a screenshot after completing a task to verify the visual result
-    - Always call get_scene_info() after completing a task to verify the changes worked
-    - When executing multiple operations, take intermediate screenshots to confirm each step
-    - If something looks wrong in the screenshot or scene info, investigate and fix before proceeding
-
-    **Writing code that survives the user's Blender version and language:**
-    - Read `blender_version` from get_addon_status() before using version-sensitive APIs
-    - Look shader nodes up by type, not by name: `nodes["Principled BSDF"]` is None on a
-      localized (non-English) Blender UI
-    - Never hardcode enum identifiers; read the valid values from `bl_rna` first. `render.engine`
-      is the exception - RNA under-reports it, so read the current value or assign inside
-      `try/except TypeError` and use the identifiers listed in the error
-    - Set colors on shader node inputs; `material.diffuse_color` is viewport-only
-    """
 
 # MCP Apps and OpenAI extensions. Tools marked visibility ["app"] are called by
 # the host UI, never by the model, and are hidden from clients without MCP Apps.
@@ -2346,7 +2010,7 @@ def main():
     """Run the MCP server, or addon install CLI subcommands."""
     global CLI_HOST, CLI_PORT
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"install-addon", "addon-paths", "setup", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] in {"install-addon", "addon-paths", "setup", "update", "-h", "--help"}:
         code = run_addon_cli(sys.argv[1:])
         if code >= 0:
             raise SystemExit(code)
@@ -2370,6 +2034,7 @@ def main():
             "Setup guide: https://github.com/ahujasid/blender-mcp#installation "
             "(if the addon is outdated this logs how to update it: uvx mcp-for-blender install-addon)"
         )
+    context_log.install(mcp, SERVER_INSTRUCTIONS)
     mcp.run()
 
 if __name__ == "__main__":

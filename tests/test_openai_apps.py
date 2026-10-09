@@ -125,7 +125,7 @@ POLYPIZZA_RESULTS = {
 def _search_polypizza(monkeypatch, ctx):
     monkeypatch.setattr(server, "get_blender_connection",
                         lambda: types.SimpleNamespace(send_command=lambda *_a, **_k: POLYPIZZA_RESULTS))
-    return asyncio.run(server.search_polypizza_models(ctx, query="chair", user_prompt=""))
+    return asyncio.run(server._search_polypizza(ctx, query="chair", user_prompt=""))
 
 
 def test_search_returns_only_the_picked_asset(monkeypatch):
@@ -289,7 +289,7 @@ def _fresh_store(monkeypatch, view=None, **origin):
 def test_the_viewport_app_is_fullscreen_only():
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
     assert tools["open_viewport"].meta["ui"]["resourceUri"] == openai_apps.VIEWPORT_URI
-    assert tools["get_viewport_screenshot"].meta["ui"]["resourceUri"] == openai_apps.VIEWPORT_URI
+    assert tools["look"].meta["ui"]["resourceUri"] == openai_apps.VIEWPORT_URI
     resources = {str(r.uri): r for r in asyncio.run(server.mcp.list_resources())}
     assert resources[openai_apps.VIEWPORT_URI].meta["openai/ui"] == {
         "preferredDisplayMode": "fullscreen", "availableDisplayModes": ["fullscreen"],
@@ -306,14 +306,14 @@ def test_viewport_state_says_when_the_addon_is_too_old_to_pick(monkeypatch):
 
 def test_model_screenshots_reach_the_viewport_app(monkeypatch):
     store = _fresh_store(monkeypatch)
-    server.get_viewport_screenshot(None, max_size=500)
+    server._viewport_screenshot(None, max_size=500)
     state, png = store.snapshot()
     assert (state["seq"], state["source"], png) == (1, "model", b"\x89PNG")
 
 
 def test_model_screenshot_state_is_for_the_app_only(monkeypatch):
     _fresh_store(monkeypatch, view=VIEW)
-    result = server.get_viewport_screenshot(None, max_size=500)
+    result = server._viewport_screenshot(None, max_size=500)
     # This fork hands the model a path on disk instead of inline image bytes:
     # the Freebuff harness cannot render inline image content.
     assert [c.type for c in result.content] == ["text"]
@@ -327,10 +327,11 @@ def test_model_screenshot_state_is_for_the_app_only(monkeypatch):
 def test_model_screenshot_returns_inline_when_asked(monkeypatch):
     _fresh_store(monkeypatch, view=VIEW)
     monkeypatch.setenv("BLENDER_MCP_IMAGE_OUTPUT", "inline")
-    result = server.get_viewport_screenshot(None, max_size=500)
+    result = server._viewport_screenshot(None, max_size=500)
     assert [c.type for c in result.content] == ["image"]
     wire = result.model_dump(by_alias=True, exclude_none=True)
     assert wire["_meta"][openai_apps.VIEWPORT_STATE_META]["seq"] == 1
+
 
 
 def test_scene_changing_commands_make_the_image_stale_until_blender_is_quiet(monkeypatch):
@@ -458,10 +459,12 @@ def test_viewport_html_ships_with_the_package():
 async def _exchange(monkeypatch, capabilities, steps):
     """Run the real server over in-memory streams: initialize with `capabilities`,
     then feed each (message, on_reply) step, returning every message the server sent."""
+
     monkeypatch.setattr(server, "check_addon_status_on_startup",
                         lambda: types.SimpleNamespace(needs_action=False, message=None))
     monkeypatch.setattr(server, "get_blender_connection",
                         lambda: types.SimpleNamespace(send_command=lambda *_a, **_k: POLYPIZZA_RESULTS))
+
 
     to_server_send, to_server_recv = anyio.create_memory_object_stream(16)
     from_server_send, from_server_recv = anyio.create_memory_object_stream(16)
@@ -526,7 +529,7 @@ def test_picker_round_trip_over_the_wire(monkeypatch):
 
     async def step(send, recv, received, reply_to):
         await send(JSONRPCRequest(jsonrpc="2.0", id=2, method="tools/call", params={
-            "name": "search_polypizza_models", "arguments": {"query": "chair"},
+            "name": "search_assets", "arguments": {"source": "polypizza", "query": "chair"},
         }))
         elicit = (await recv.receive()).message.root
         received.append(elicit)

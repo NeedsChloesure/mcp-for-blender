@@ -12,9 +12,9 @@ name: Upstream sync
 
 on:
   schedule:
-    # Daily at 06:17 UTC. Off the hour on purpose; GitHub drops jobs scheduled
-    # exactly on the hour when load is high.
-    - cron: "17 6 * * *"
+    # Weekly on Monday at 06:17 UTC. Off the hour on purpose; GitHub drops jobs
+    # scheduled exactly on the hour when load is high.
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 concurrency:

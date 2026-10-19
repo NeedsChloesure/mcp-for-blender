@@ -396,7 +396,14 @@ def _integrations(blender: BlenderConnection) -> dict:
     """Which libraries (search_assets) and generators (generate_3d) are on. Reads
     local settings only."""
     status = {}
+<<<<<<< HEAD
     for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d"):
+=======
+    for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d", "meshy"):
+        if name in (premium_generators or []):
+            status[name] = "on (Premium)"
+            continue
+>>>>>>> upstream/main
         try:
             reply = blender.send_command(f"get_{name}_status")
             status[name] = "on" if reply.get("enabled") else "off"
@@ -404,7 +411,11 @@ def _integrations(blender: BlenderConnection) -> dict:
             status[name] = "not in this addon version" if _addon_lacks(e) else "unknown"
     return {
         "libraries": {k: status[k] for k in ("polyhaven", "sketchfab", "polypizza")},
+<<<<<<< HEAD
         "generators": {k: status[k] for k in ("hunyuan3d", "hyper3d")},
+=======
+        "generators": {k: status[k] for k in ("tripo", "hunyuan3d", "hyper3d", "meshy")},
+>>>>>>> upstream/main
     }
 
 
@@ -1490,6 +1501,13 @@ def _generation_send(command: str, params: dict):
         return get_blender_connection().send_command(command, params)
     except Exception as e:
         if _addon_lacks(e):
+<<<<<<< HEAD
+=======
+            if "tripo" in command:
+                raise generation.Unsupported(TRIPO_UNAVAILABLE)
+            if "meshy" in command:
+                raise generation.Unsupported(missing_feature("Meshy", "Meshy"))
+>>>>>>> upstream/main
             label = "Hunyuan3D" if "hunyuan" in command else "Hyper3D Rodin"
             raise generation.Unsupported(missing_feature(label, label))
         raise
@@ -1497,12 +1515,29 @@ def _generation_send(command: str, params: dict):
 
 def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
     enabled = {}
-    for name, command in (("hunyuan3d", "get_hunyuan3d_status"), ("hyper3d", "get_hyper3d_status")):
+    for name, command in (
+        ("hunyuan3d", "get_hunyuan3d_status"),
+        ("hyper3d", "get_hyper3d_status"),
+        ("meshy", "get_meshy_status"),
+    ):
         try:
             enabled[name] = bool(blender.send_command(command).get("enabled"))
         except Exception:
             enabled[name] = False
     return enabled
+
+
+def _meshy_unavailable(blender: BlenderConnection) -> str:
+    """Why Meshy can't run, in the addon's words: switched off, no key, or
+    Premium selected. Premium with no Premium generator ticked looks like no
+    Premium to the handshake, so only the addon can tell those apart."""
+    try:
+        reply = blender.send_command("get_meshy_status")
+    except Exception as e:
+        return missing_feature("Meshy", "Meshy") if _addon_lacks(e) else generation.MESHY_UNAVAILABLE
+    if isinstance(reply, dict) and not reply.get("enabled") and reply.get("message"):
+        return " ".join(reply["message"].split())
+    return generation.MESHY_UNAVAILABLE
 
 
 def _pending_generations() -> "generation.Pending":
@@ -1524,9 +1559,15 @@ async def _generation_reply(ctx: Context, job: "generation.Job", wait_seconds: f
         bounds = []
     for b in bounds:
         lo, hi = b["world_bounding_box"]
-        reply += (f" world_bounding_box min {lo}, max {hi} (size {b['size']} m). Generated models have "
-                  "arbitrary scale and facing: scale it to real size, put its lowest point on the ground, "
-                  "rotate it to face the right way, then look(mode=\"angles\", target=[\"" + b["name"] + "\"]).")
+        reply += f" world_bounding_box min {lo}, max {hi} (size {b['size']} m)."
+        if job.provider == "meshy":
+            # Rescaling here would undo Meshy's auto_size.
+            reply += (" Meshy sized it to real-world height with its origin at the bottom. Don't rescale unless "
+                      "the user asks; check it faces the right way")
+        else:
+            reply += (" Generated models have arbitrary scale and facing: scale it to real size, put its lowest "
+                      "point on the ground, rotate it to face the right way")
+        reply += ", then look(mode=\"angles\", target=[\"" + b["name"] + "\"])."
     return reply + note
 
 
@@ -1547,8 +1588,8 @@ async def generate_3d(
     Make one new textured 3D model from a text prompt or an image, and import it.
 
     One object per call: not a whole scene, the ground, or parts to assemble. It arrives at
-    arbitrary scale and facing. Each call can cost the user money or a monthly generation, so
-    duplicate a generated object for repeats.
+    arbitrary scale and facing (meshy: real-world size, origin at the bottom). Each call can cost
+    the user money or a monthly generation, so duplicate a generated object for repeats.
 
     Waits up to wait_seconds (at most 45), then imports. Generation usually takes 1-3 minutes: if
     it isn't done in time you get a job handle; call generate_3d(job=..., name=...) again to keep
@@ -1560,9 +1601,16 @@ async def generate_3d(
     - image: Instead of a prompt: an absolute image file path or an http(s) URL. Images attached in
       chat can't be passed: ask the user for a path or URL, don't fall back to text without asking.
     - name: Object name in the scene. Defaults to one made from the prompt.
+<<<<<<< HEAD
     - provider: auto (default), hunyuan3d or hyper3d. Auto picks the first enabled generator.
     - quality: "standard" or "high". Omit for the provider default; "high" only when the user
       asks for more detail.
+=======
+    - provider: auto (default), tripo, hunyuan3d, hyper3d or meshy. Auto prefers the user's MCP for
+      Blender Premium generators, then their own API keys.
+    - quality: "standard" or "high" (Premium). Omit for the user's default; "high" only when the
+      user asks for more detail.
+>>>>>>> upstream/main
     - bbox_condition: hyper3d only: [length, width, height] proportions.
     - job: A handle from an earlier call, to resume waiting for it.
     - user_prompt: The user's own words describing what they want, quoted verbatim.
@@ -1577,8 +1625,17 @@ async def generate_3d(
         if bool(prompt) == bool(image):
             return "Error: give exactly one of prompt or image."
         blender = get_blender_connection()
+<<<<<<< HEAD
         chosen = generation.choose_provider(provider, _own_key_generators(blender))
         note = ""
+=======
+        premium = _premium_generators(blender)
+        own_keys = {} if premium else _own_key_generators(blender)
+        if not premium and (provider or "").lower() == "meshy" and not own_keys.get("meshy"):
+            return f"Error: {_meshy_unavailable(blender)}"
+        chosen, is_premium = generation.choose_provider(provider, premium, own_keys)
+        note = "" if is_premium else premium_hint_once(ctx, {"mode": None})
+>>>>>>> upstream/main
         pending = _pending_generations()
         key = generation.request_key(chosen, prompt, image, quality, bbox_condition)
         started = pending.find(key)

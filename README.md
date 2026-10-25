@@ -220,7 +220,6 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 - [Installing this fork](#installing-this-fork)
 - [Quickstart](#quickstart)
 - [Features](#features)
-- [Premium](#premium)
 - [Components](#components)
 - [Installation](#installation)
   - [Automatic setup](#automatic-setup)
@@ -262,11 +261,7 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 | **Material control** | Apply and modify materials and colors |
 | **Visual verification** | Multi-angle, camera, wireframe, X-ray and animation-strip views, plus renders, so the AI checks its own work |
 | **Code execution** | The AI writes Blender Python directly |
-| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Tripo, Hyper3D Rodin and Hunyuan3D |
-
-## Premium
-
-Generate AI 3D models (Hunyuan3D, Tripo, Hyper3D Rodin) straight into Blender without bringing your own API keys. [More details](https://www.mcp-for-blender.com/premium)
+| **Asset libraries** | Poly Haven assets, Sketchfab models and Poly Pizza low-poly models |
 
 ## Components
 
@@ -681,7 +676,7 @@ This updates the MCP server (refreshing uv's cached copy, or upgrading a `uv too
 
 If a client is still set up with the old `blender-mcp` package name, `update` says so; `uvx mcp-for-blender setup` switches it over.
 
-> **Note:** the MCP server never modifies your Blender addon files on its own. When it starts, it checks whether the installed addon is behind the bundled copy and logs how to update; `update` and `install-addon` are what actually write. Trajectory capture still works on older loaded addons via an `execute_code` fallback.
+> **Note:** the MCP server never modifies your Blender addon files on its own. When it starts, it checks whether the installed addon is behind the bundled copy and logs how to update; `update` and `install-addon` are what actually write. The sidebar's own "check for updates" only looks at this fork's `main` and links to the file: it never downloads or installs anything.
 
 ---
 
@@ -705,40 +700,16 @@ Once the config file has been set on Claude, and the addon is running on Blender
 
 ### Capabilities
 
-The AI writes Blender Python itself for modelling, layout, materials, animation, rigging and retopology. The MCP adds what Python can't do on its own, as nine tools:
+The AI writes Blender Python itself for modelling, layout, materials, animation, rigging and retopology. The MCP adds what Python can't do on its own, as seven tools:
 
 | Tool | What it's for |
 |---|---|
 | `execute_blender_code` | Run Python in your live Blender |
 | `look` | See the result from the `viewport`, `camera`, `angles` (auto-framed multi-view sheet, any direction) or `frames` (animation strip), drawn `solid`, `material`, `rendered`, `wireframe` or `xray`; or show a render or image file |
 | `get_scene_info` | Compact scene summary, one line per object with the fields you pick (placement, materials, topology, weights, ...); drill in with `root` or `query` |
-| `generate_3d` | One call to generate and import a model with Hunyuan3D, Hyper3D Rodin or Meshy |
 | `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
-| `get_addon_status` | Blender version, addon version, and which libraries and generators are switched on |
-| `disable_telemetry`, `record_trajectory_feedback` | Data collection controls |
-
-#### Hunyuan3D on Tencent Cloud (Official API mode)
-
-Which Tencent Cloud service the addon must call depends on where your account lives:
-
-| Account | Service the addon calls | Region | Sidebar toggle |
-|---|---|---|---|
-| Mainland (cloud.tencent.com) | AI3D 3.0 (`ai3d`, version `2025-05-13`) | `ap-guangzhou` | leave **International (Pro) account** off (default) |
-| International (tencentcloud.com), *Hunyuan-to-3D (Professional)* | `hunyuan`, version `2023-09-01`, PBR enabled | `ap-singapore` | tick **International (Pro) account** |
-
-International credentials sent to the mainland endpoint fail with `AuthFailure.SignatureFailure` or
-`ResourceUnavailable`, so tick the toggle when your SecretId/SecretKey come from tencentcloud.com.
-The toggle sits under **Tencent Hunyuan 3D → Official API** in the sidebar.
-
-#### Meshy
-
-[Meshy](https://www.meshy.ai/) generates textured 3D models from a text prompt or a reference image,
-sized to real-world height with the origin at the bottom, so models arrive standing on the ground at a plausible size.
-It runs on your own Meshy API key. API keys need a paid Meshy plan:
-[get a Meshy API key](https://www.meshy.ai/developers/keys?utm_source=mcp-for-blender&utm_medium=integration&utm_campaign=blender-addon).
-Tick **Meshy** under **AI Model Generation** in the sidebar, choose a **Model**, and paste the key.
-
-#### Poly Haven
+| `get_addon_status` | Blender version, addon version, and which asset libraries are switched on |
+| `disable_telemetry` | Data collection controls (a no-op: this fork has no telemetry) |#### Poly Haven
 
 [Poly Haven](https://polyhaven.com/) publishes around 2,400 HDRIs, textures and models,
 all CC0 and free, funded by donations rather than by selling the assets. There is no API
@@ -816,8 +787,6 @@ Here are some examples of what you can ask Claude to do:
 | *"Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven"* | [Watch](https://www.youtube.com/watch?v=I29rn92gkC4) |
 | Give a reference image, and create a Blender scene out of it | [Watch](https://www.youtube.com/watch?v=FDRb03XPiRo) |
 | *"Get information about the current scene, and make a threejs sketch from it"* | [Watch](https://www.youtube.com/watch?v=jxbNI5L7AH8) |
-| *"Generate a 3D model of a garden gnome through Hyper3D"* | |
-| *"Generate a wooden rocking chair with Meshy"* | |
 | *"Fill this room with low-poly furniture from Poly Pizza"* | |
 | *"Make this car red and metallic"* | |
 | *"Create a sphere and place it above the cube"* | |
@@ -836,10 +805,6 @@ You can store these values there so they survive Blender restarts:
 
 - Sketchfab API Key
 - Poly Pizza API Key
-- Hyper3D API Key
-- Hunyuan3D SecretId / SecretKey
-- Hunyuan3D API URL
-- Meshy API Key
 
 For headless setups or CI, credentials can also be injected by environment variables:
 
@@ -847,11 +812,6 @@ For headless setups or CI, credentials can also be injected by environment varia
 |---|
 | `BLENDERMCP_SKETCHFAB_API_KEY` |
 | `BLENDERMCP_POLYPIZZA_API_KEY` |
-| `BLENDERMCP_HYPER3D_API_KEY` |
-| `BLENDERMCP_HUNYUAN3D_SECRET_ID` |
-| `BLENDERMCP_HUNYUAN3D_SECRET_KEY` |
-| `BLENDERMCP_HUNYUAN3D_API_URL` |
-| `BLENDERMCP_MESHY_API_KEY` |
 
 ---
 
@@ -888,9 +848,8 @@ client, the trajectory recorder, the first-run consent prompt, and their config 
 There is no install ID, no UUID file written to disk, no background sender thread, no
 network calls, and no consent prompt. Nothing about your session leaves the machine.
 
-The `disable_telemetry` and `record_trajectory_feedback` tools are still listed, as no-ops,
-so existing client prompts that reference them still resolve. Their descriptions are marked
-DEPRECATED.
+The `disable_telemetry` tool is still listed as a no-op, so existing client prompts that
+reference it still resolve. Its description is marked DEPRECATED.
 
 If you want the upstream collection behaviour back, use the official
 [MCP for Blender](https://github.com/ahujasid/mcp-for-blender) build instead.

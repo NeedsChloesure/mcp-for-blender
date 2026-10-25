@@ -524,7 +524,7 @@ return info
 '''
 
 
-# Bounding box of freshly imported objects, so a generation or import result
+# Bounding box of freshly imported objects, so an import result
 # says how big the thing is and whether it sits on the ground.
 BOUNDS = r'''
 import bpy

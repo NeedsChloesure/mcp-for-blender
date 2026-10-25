@@ -17,9 +17,6 @@ summary: Building a believable scene - scale, grounding, composition, choosing b
 
 ## Getting assets
 
-- **Generate** (`generate_3d`) hero objects and anything specific or unusual: "a rusted
-  steampunk diving helmet". One object per generation — never a whole scene, the ground, or parts
-  to assemble. Generate once and duplicate (`obj.copy()`) for repeats.
 - **Poly Haven** (`search_assets(source="polyhaven")`): HDRIs, PBR textures for large surfaces
   (floors, walls, terrain), and generic realistic props. CC0.
 - **Sketchfab**: specific real-world things (a named car model, a landmark), and realistic props.

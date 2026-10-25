@@ -131,8 +131,6 @@ def _load_addon(monkeypatch, scene, selected_objects=()):
 def _scene(polypizza_enabled=True):
     return types.SimpleNamespace(
         blendermcp_use_polyhaven=False,
-        blendermcp_use_hyper3d=False,
-        blendermcp_use_hunyuan3d=False,
         blendermcp_use_sketchfab=False,
         blendermcp_use_polypizza=polypizza_enabled,
     )

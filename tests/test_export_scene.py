@@ -37,10 +37,8 @@ class _Objects:
 def _load_addon(monkeypatch, objects, selected, exports):
     scene = types.SimpleNamespace(
         blendermcp_use_polyhaven=False,
-        blendermcp_use_hyper3d=False,
         blendermcp_use_sketchfab=False,
         blendermcp_use_polypizza=False,
-        blendermcp_use_hunyuan3d=False,
         objects=objects,
     )
     bpy = types.ModuleType("bpy")

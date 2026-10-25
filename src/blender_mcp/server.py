@@ -23,7 +23,7 @@ from .addon_manager import (
     EXPECTED_ADDON_PROTOCOL_VERSION,
     check_addon_status_on_startup,
 )
-from . import blender_scripts, context_log, generation
+from . import blender_scripts, context_log
 from .safe_mode import safe_mode_enabled, validate_code, SandboxViolation, SAFE_MODE_ENV
 from .openai_apps import (
     APP_MIME_TYPE,
@@ -311,7 +311,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 SERVER_INSTRUCTIONS = """MCP for Blender drives the user's live Blender. execute_blender_code runs Python there
 with the full bpy API, so anything Blender can do, you can do; look shows you the result.
 
-Start with get_addon_status (Blender version, which libraries and generators are on) and
+Start with get_addon_status (Blender version, which asset libraries are on) and
 get_scene_info.
 
 Scripts run in someone else's Blender:
@@ -327,10 +327,8 @@ look is how you see your work; use it as much as you need. Images stay in the co
 a smaller max_size keeps long sessions cheap.
 
 Objects can also come from existing libraries (search_assets, then import_asset: Poly Haven,
-Sketchfab, Poly Pizza) or be made to order (generate_3d: one new textured model from text or an
-image, 1-3 minutes, may cost the user a credit). A generation is one object, never a whole
-scene, the ground or parts to assemble. Imported and generated models arrive at arbitrary
-scale: use the reported world_bounding_box to size them and put them on the ground."""
+Sketchfab, Poly Pizza). Imported models arrive at arbitrary scale: use the reported
+world_bounding_box to size them and put them on the ground."""
 
 # Create the MCP server with lifespan support
 mcp = FastMCP(
@@ -393,10 +391,9 @@ def get_blender_connection():
 
 
 def _integrations(blender: BlenderConnection) -> dict:
-    """Which libraries (search_assets) and generators (generate_3d) are on. Reads
-    local settings only."""
+    """Which asset libraries (search_assets) are on. Reads local settings only."""
     status = {}
-    for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d", "meshy"):
+    for name in ("polyhaven", "sketchfab", "polypizza"):
         try:
             reply = blender.send_command(f"get_{name}_status")
             status[name] = "on" if reply.get("enabled") else "off"
@@ -404,7 +401,6 @@ def _integrations(blender: BlenderConnection) -> dict:
             status[name] = "not in this addon version" if _addon_lacks(e) else "unknown"
     return {
         "libraries": {k: status[k] for k in ("polyhaven", "sketchfab", "polypizza")},
-        "generators": {k: status[k] for k in ("hunyuan3d", "hyper3d", "meshy")},
     }
 
 
@@ -412,10 +408,9 @@ def _integrations(blender: BlenderConnection) -> dict:
 async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
     """
     Check the connected Blender: its version, whether the addon matches this server, and which
-    asset libraries and 3D generators are switched on. Call it once at the start.
+    asset libraries are switched on. Call it once at the start.
 
-    `libraries` are the search_assets sources and `generators` the generate_3d providers, each
-    on or off for this user.
+    `libraries` are the search_assets sources, on or off for this user.
 
     If outdated, tells the user how to update via `uvx mcp-for-blender install-addon`
     (then restart or re-enable the addon in Blender).
@@ -1345,10 +1340,9 @@ async def _download_polypizza(
 
 
 # The model-facing tool surface. Each tool covers a job the model can't do
-# with execute_blender_code alone: seeing the scene (look), paid and keyed
-# services (generate_3d, search_assets, import_asset), and craft knowledge it
-# loads only when needed (get_guide). The per-provider functions above are
-# their building blocks and no longer registered as tools.
+# with execute_blender_code alone: seeing the scene (look) and keyed asset
+# libraries (search_assets, import_asset). The per-library helpers above are
+# their building blocks and are not registered as tools.
 
 LOOK_MODES = ("viewport", "camera", "angles", "frames")
 LOOK_ANGLES = ("front", "back", "left", "right", "top", "three_quarter")
@@ -1484,148 +1478,6 @@ def _look_via_script(args: dict) -> CallToolResult:
     os.remove(path)
     return CallToolResult(content=[_png_content(png), TextContent(type="text", text=_look_caption(info))])
 
-
-def _generation_send(command: str, params: dict):
-    try:
-        return get_blender_connection().send_command(command, params)
-    except Exception as e:
-        if _addon_lacks(e):
-            if "meshy" in command:
-                raise generation.Unsupported(missing_feature("Meshy", "Meshy"))
-            label = "Hunyuan3D" if "hunyuan" in command else "Hyper3D Rodin"
-            raise generation.Unsupported(missing_feature(label, label))
-        raise
-
-
-def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
-    enabled = {}
-    for name, command in (
-        ("hunyuan3d", "get_hunyuan3d_status"),
-        ("hyper3d", "get_hyper3d_status"),
-        ("meshy", "get_meshy_status"),
-    ):
-        try:
-            enabled[name] = bool(blender.send_command(command).get("enabled"))
-        except Exception:
-            enabled[name] = False
-    return enabled
-
-
-def _meshy_unavailable(blender: BlenderConnection) -> str:
-    """Why Meshy can't run, in the addon's words: switched off or no key."""
-    try:
-        reply = blender.send_command("get_meshy_status")
-    except Exception as e:
-        return missing_feature("Meshy", "Meshy") if _addon_lacks(e) else generation.MESHY_UNAVAILABLE
-    if isinstance(reply, dict) and not reply.get("enabled") and reply.get("message"):
-        return " ".join(reply["message"].split())
-    return generation.MESHY_UNAVAILABLE
-
-
-def _pending_generations() -> "generation.Pending":
-    return generation.Pending(context_log.context_log_path().with_name("pending-generations.json"))
-
-
-async def _generation_reply(ctx: Context, job: "generation.Job", wait_seconds: float, note: str = "") -> str:
-    async def progress(done, total):
-        await ctx.report_progress(done, total)
-
-    imported, detail = await generation.wait_and_import(
-        _generation_send, job, wait_seconds, progress, pending=_pending_generations())
-    if not imported:
-        return f"Still generating ({detail}). {job.resume_hint}{note}"
-    reply = f"Generated and imported '{job.name}' with {job.provider}."
-    try:
-        bounds = _run_script(blender_scripts.BOUNDS, {"names": [job.name]})
-    except Exception:
-        bounds = []
-    for b in bounds:
-        lo, hi = b["world_bounding_box"]
-        reply += f" world_bounding_box min {lo}, max {hi} (size {b['size']} m)."
-        if job.provider == "meshy":
-            # Rescaling here would undo Meshy's auto_size.
-            reply += (" Meshy sized it to real-world height with its origin at the bottom. Don't rescale unless "
-                      "the user asks; check it faces the right way")
-        else:
-            reply += (" Generated models have arbitrary scale and facing: scale it to real size, put its lowest "
-                      "point on the ground, rotate it to face the right way")
-        reply += ", then look(mode=\"angles\", target=[\"" + b["name"] + "\"])."
-    return reply + note
-
-
-@mcp.tool()
-async def generate_3d(
-    ctx: Context,
-    prompt: str | None = None,
-    image: str | None = None,
-    name: str | None = None,
-    provider: str = "auto",
-    quality: str | None = None,
-    bbox_condition: list[float] | None = None,
-    job: str | None = None,
-    wait_seconds: int = 50,
-    user_prompt: str = "",
-) -> str:
-    """
-    Make one new textured 3D model from a text prompt or an image, and import it.
-
-    One object per call: not a whole scene, the ground, or parts to assemble. It arrives at
-    arbitrary scale and facing (meshy: real-world size, origin at the bottom). Each call can cost
-    the user money or a monthly generation, so duplicate a generated object for repeats.
-
-    Waits up to wait_seconds (at most 45), then imports. Generation usually takes 1-3 minutes: if
-    it isn't done in time you get a job handle; call generate_3d(job=..., name=...) again to keep
-    waiting. Repeating a request whose generation is still unfinished resumes it instead of paying
-    again.
-
-    Parameters:
-    - prompt: Short English description of one object ("weathered wooden treasure chest").
-    - image: Instead of a prompt: an absolute image file path or an http(s) URL. Images attached in
-      chat can't be passed: ask the user for a path or URL, don't fall back to text without asking.
-    - name: Object name in the scene. Defaults to one made from the prompt.
-    - provider: auto (default), hunyuan3d, hyper3d or meshy. Auto picks the first enabled generator.
-    - quality: "standard" or "high". Omit for the provider default; "high" only when the user
-      asks for more detail.
-    - bbox_condition: hyper3d only: [length, width, height] proportions.
-    - job: A handle from an earlier call, to resume waiting for it.
-    - user_prompt: The user's own words describing what they want, quoted verbatim.
-    """
-    if quality not in (None, "standard", "high"):
-        return "Error: quality must be 'standard' or 'high'"
-    call_start = time.monotonic()
-    wait_seconds = max(10, min(int(wait_seconds or 50), generation.MAX_CALL_S))
-    try:
-        if job:
-            return await _generation_reply(ctx, generation.Job.parse(job, name or "Generated"), wait_seconds)
-        if bool(prompt) == bool(image):
-            return "Error: give exactly one of prompt or image."
-        blender = get_blender_connection()
-        own_keys = _own_key_generators(blender)
-        if (provider or "").lower() == "meshy" and not own_keys.get("meshy"):
-            return f"Error: {_meshy_unavailable(blender)}"
-        chosen = generation.choose_provider(provider, own_keys)
-        note = ""
-        pending = _pending_generations()
-        key = generation.request_key(chosen, prompt, image, quality, bbox_condition)
-        started = pending.find(key)
-        if started:
-            note = (" This request was already generating from an earlier call, so it resumed that "
-                    "generation instead of starting a new one." + note)
-        else:
-            started = generation.submit(
-                _generation_send, chosen, name or generation.default_name(prompt), prompt, image, quality,
-                bbox_condition, supports_quality=(_addon_protocol() or 0) >= 11)
-            if isinstance(started, str):
-                return started + note
-            pending.add(key, started)
-        # Submitting (an image upload, say) spends the same client timeout as waiting.
-        remaining = wait_seconds - (time.monotonic() - call_start)
-        return await _generation_reply(ctx, started, remaining, note)
-    except generation.GenerationError as e:
-        return f"Error: {e}"
-    except Exception as e:
-        logger.error(f"Error generating model: {e}")
-        return f"Error generating model: {e}"
 
 
 ASSET_SOURCES = ("polyhaven", "sketchfab", "polypizza")

@@ -826,7 +826,7 @@ def run_setup(dry_run: bool = False, assume_yes: bool = False, skip_addon: bool 
             print(f"  • {r.client.restart_hint}")
     if any(r.ok and r.client.kind == "codex" for r in results):
         print("  • Codex: the MCP for Blender plugin adds viewport branding and suggested prompts;")
-        print("    see the README. Model generation can outlast Codex's 60s tool timeout; to raise it,")
+        print("    see the README. Long asset downloads can outlast Codex's 60s tool timeout; to raise it,")
         print("    add `tool_timeout_sec = 600` under [mcp_servers.blender] in ~/.codex/config.toml.")
     if addon and addon.installed:
         print("  • Open Blender. The addon starts its server on launch (MCP for Blender tab, press N).")

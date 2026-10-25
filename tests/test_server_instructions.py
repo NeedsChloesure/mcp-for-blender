@@ -32,7 +32,7 @@ def test_instructions_stay_small_enough_to_inject_every_turn():
 
 
 def test_instructions_carry_the_asset_workflow():
-    for name in ("get_addon_status", "world_bounding_box", "generate_3d", "search_assets", "import_asset"):
+    for name in ("get_addon_status", "world_bounding_box", "search_assets", "import_asset"):
         assert name in SERVER_INSTRUCTIONS
 
 

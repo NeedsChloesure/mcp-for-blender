@@ -420,8 +420,6 @@ def _load_addon(monkeypatch):
         world=None,
         collection=types.SimpleNamespace(children=FakeCollections(), objects=FakeObjects()),
         blendermcp_use_polyhaven=True,
-        blendermcp_use_hyper3d=False,
-        blendermcp_use_hunyuan3d=False,
         blendermcp_use_sketchfab=False,
         blendermcp_use_polypizza=False,
     )
@@ -1142,8 +1140,7 @@ def test_a_compressed_blend_header_is_read(server, tmp_path):
 
 def test_model_includes_cannot_escape_the_download_directory(server, monkeypatch, tmp_path):
     """The API response controls these keys, so a malicious or MITM'd one could
-    write outside the download directory - issue #257. Mirrors
-    test_hunyuan_import_security.py for the sibling code path.
+    write outside the download directory - issue #257.
 
     The download directory is nested deliberately deep: a "../../.." that got
     through would then still land inside tmp_path, where this test can see it.

@@ -46,8 +46,6 @@ RELEASED_SERVER_COMMANDS = {
     "get_polyhaven_asset_preview", "download_polyhaven_asset", "set_texture",
     "get_sketchfab_status", "search_sketchfab_models", "get_sketchfab_model_preview", "download_sketchfab_model",
     "get_polypizza_status", "search_polypizza_models", "download_polypizza_model",
-    "get_hyper3d_status", "create_rodin_job", "poll_rodin_job_status", "import_generated_asset",
-    "get_hunyuan3d_status", "create_hunyuan_job", "poll_hunyuan_job_status", "import_generated_asset_hunyuan",
     "export_scene",
 }
 
@@ -255,12 +253,6 @@ def test_asset_import_works_or_asks_for_an_update(addon):
         assert "install-addon" in reply, reply
 
 
-def test_generation_never_raises(addon):
-    for provider in ("auto", "tripo", "hunyuan3d", "hyper3d"):
-        reply = _run(server.generate_3d(None, prompt="a stool", provider=provider, wait_seconds=10))
-        assert isinstance(reply, str) and reply
-
-
 # ------------------------------------------------------------ any server, new addon
 
 def test_current_addon_answers_every_command_released_servers_send():
@@ -276,10 +268,10 @@ def _server_commands() -> set[str]:
             if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) \
                     and isinstance(node.args[0].value, str):
                 name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
-                if name in ("send_command", "send", "_generation_send"):
+                if name in ("send_command", "send"):
                     found.add(node.args[0].value)
     # get_{name}_status, built from a list.
-    found.update(f"get_{n}_status" for n in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d"))
+    found.update(f"get_{n}_status" for n in ("polyhaven", "sketchfab", "polypizza"))
     return found
 
 

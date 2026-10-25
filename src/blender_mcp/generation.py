@@ -1,23 +1,14 @@
-<<<<<<< HEAD
-"""One generate/poll/import flow across Hunyuan3D and Hyper3D Rodin.
-=======
-"""One generate/poll/import flow across Tripo, Hunyuan3D, Hyper3D Rodin and Meshy.
->>>>>>> upstream/main
+"""One generate/poll/import flow across Hunyuan3D, Hyper3D Rodin and Meshy.
 
 Each provider used to be three or four tools with different id shapes. Here a
 generation is a single call: submit, poll until done or out of time, import.
 If time runs out the caller gets a job handle ("<provider>:<kind>:<id>") and
 passes it back to resume, so no client timeout ever strands a paid generation.
 
-<<<<<<< HEAD
-The addon still does the provider work, through the commands it has always had,
-so this needs no addon update.
-=======
-The addon still does the provider work (and the Premium routing), through the
-commands it has always had, so this needs no addon update. Meshy is the
-exception: it is new, and its text generation is two paid tasks, a preview
-(mesh) and then a refine (texture), which this module chains and resumes.
->>>>>>> upstream/main
+The addon still does the provider work, through the commands it has always
+had, so this needs no addon update. Meshy is the exception: it is new, and its
+text generation is two paid tasks, a preview (mesh) and then a refine
+(texture), which this module chains and resumes.
 """
 
 import asyncio
@@ -35,24 +26,14 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("BlenderMCPServer")
 
-<<<<<<< HEAD
-PROVIDERS = ("hunyuan3d", "hyper3d")
+PROVIDERS = ("hunyuan3d", "hyper3d", "meshy")
 
 # Auto-pick order for the generators a user can run with their own keys.
-OWN_KEY_ORDER = ("hunyuan3d", "hyper3d")
-=======
-PROVIDERS = ("tripo", "hunyuan3d", "hyper3d", "meshy")
-
-# Auto-pick order. Premium generators come first because the user is paying
-# for them and they run the stronger models; among those Tripo is Premium-only.
-# Meshy runs on the user's own key only.
-PREMIUM_ORDER = ("tripo", "hunyuan3d", "hyper3d")
 OWN_KEY_ORDER = ("hunyuan3d", "hyper3d", "meshy")
 
 # Meshy task kinds: text preview, text refine, image to model.
 MESHY_KINDS = ("t2p", "t2r", "i2m")
 MESHY_PROMPT_MAX = 800
->>>>>>> upstream/main
 
 POLL_INTERVAL_S = 5.0
 # A whole generate_3d call, submit included, stays under this. MCP clients on
@@ -63,17 +44,9 @@ MAX_CALL_S = 45.0
 # failed after 60 minutes, and provider results expire.
 PENDING_MAX_AGE_S = 2 * 3600
 
-<<<<<<< HEAD
-=======
-TRIPO_UNAVAILABLE = ("Tripo is only available with MCP for Blender Premium. If Premium is on, update the Blender "
-                     "addon: run `uvx mcp-for-blender install-addon`, then restart Blender.")
 MESHY_UNAVAILABLE = ("Meshy is not enabled. In the MCP for Blender sidebar in Blender (press N in the 3D Viewport), "
                      "tick Meshy under AI Model Generation and paste a Meshy API key (needs a paid Meshy plan).")
-MESHY_NOT_IN_PREMIUM = ("Meshy runs on the user's own Meshy API key only and isn't available while MCP for Blender "
-                        "Premium is the generation source. Use another provider, or switch Generation Source to "
-                        "Your own API keys in the add-on preferences.")
 
->>>>>>> upstream/main
 Send = Callable[[str, dict], Any]
 Progress = Callable[[float, float], Awaitable[None]]
 
@@ -89,13 +62,8 @@ class Unsupported(GenerationError):
 @dataclass
 class Job:
     provider: str
-<<<<<<< HEAD
-    kind: str   # hyper3d: "fal" | "main"; hunyuan3d: "job"
-    ident: str  # request id, job id, or "<task_uuid>|<subscription_key>"
-=======
-    kind: str   # tripo: "rid"; hyper3d: "fal" | "main"; hunyuan3d: "job"; meshy: one of MESHY_KINDS
+    kind: str   # hyper3d: "fal" | "main"; hunyuan3d: "job"; meshy: one of MESHY_KINDS
     ident: str  # request id, job id, task id, or "<task_uuid>|<subscription_key>"
->>>>>>> upstream/main
     name: str
 
     @property
@@ -227,19 +195,6 @@ def choose_provider(requested: str, own_key_enabled: dict[str, bool]) -> str:
     if requested != "auto":
         if requested not in PROVIDERS:
             raise GenerationError(f"Unknown provider {requested!r}. Use one of: auto, {', '.join(PROVIDERS)}")
-<<<<<<< HEAD
-=======
-        if premium:
-            if requested == "meshy":
-                raise GenerationError(MESHY_NOT_IN_PREMIUM)
-            if requested not in premium:
-                raise GenerationError(f"{requested} is not switched on in MCP for Blender Premium. "
-                                      f"On: {', '.join(premium)}. Tick it in the Blender sidebar.")
-            return requested, True
-        if requested == "tripo":
-            # Also what an addon from before Premium looks like, so say how to update.
-            raise GenerationError(TRIPO_UNAVAILABLE)
->>>>>>> upstream/main
         if not own_key_enabled.get(requested):
             if requested == "meshy":
                 raise GenerationError(MESHY_UNAVAILABLE)
@@ -250,14 +205,8 @@ def choose_provider(requested: str, own_key_enabled: dict[str, bool]) -> str:
         if own_key_enabled.get(name):
             return name
     raise GenerationError(
-<<<<<<< HEAD
-        "No 3D generator is enabled. In Blender's MCP for Blender sidebar, turn on Hunyuan3D or Hyper3D "
-        "Rodin with an API key in the 3D Viewport."
-=======
         "No 3D generator is enabled. In Blender's MCP for Blender sidebar, turn on Hunyuan3D, Hyper3D "
-        "Rodin or Meshy with an API key, or use MCP for Blender Premium (no keys needed): "
-        "https://mcp-for-blender.com/premium"
->>>>>>> upstream/main
+        "Rodin or Meshy with an API key in the 3D Viewport."
     )
 
 
@@ -284,18 +233,6 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
            quality: str | None, bbox_condition: list | None, supports_quality: bool) -> Job | str:
     """Start a generation. Returns a Job, or a finished message for providers
     that generate synchronously (Hunyuan3D LOCAL_API)."""
-<<<<<<< HEAD
-=======
-    if provider == "tripo":
-        params = {"text_prompt": prompt, "image": image}
-        if quality:
-            params["quality"] = quality
-        result = send("create_tripo_job", params)
-        _relay(result)
-        if not result.get("request_id"):
-            raise GenerationError(f"Tripo returned no request id: {result}")
-        return Job("tripo", "rid", result["request_id"], name)
-
     if provider == "meshy":
         # No quality or bbox: Meshy sizes the model itself (auto_size).
         if prompt and len(prompt) > MESHY_PROMPT_MAX:
@@ -307,7 +244,6 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
             raise GenerationError(f"Meshy returned no task: {result}")
         return Job("meshy", result["kind"], result["task_id"], name)
 
->>>>>>> upstream/main
     if provider == "hunyuan3d":
         params = {"text_prompt": prompt, "image": image}
         if quality and supports_quality:
@@ -338,11 +274,6 @@ def submit(send: Send, provider: str, name: str, prompt: str | None, image: str 
 
 
 def poll(send: Send, job: Job) -> tuple[str, Any]:
-<<<<<<< HEAD
-    """("running" | "done" | "failed", detail) for one status check."""
-    if job.provider == "hyper3d" and job.kind == "fal":
-        result = send("poll_rodin_job_status", {"request_id": job.ident})
-=======
     """("running" | "done" | "failed", detail) for one status check, or
     ("refine", None) when a Meshy preview is ready for its refine."""
     if job.provider == "meshy":
@@ -366,10 +297,8 @@ def poll(send: Send, job: Job) -> tuple[str, Any]:
             parts.append(f"{result['progress']}%")
         return "running", " ".join(parts)
 
-    if job.provider == "tripo" or (job.provider == "hyper3d" and job.kind == "fal"):
-        command = "poll_tripo_job_status" if job.provider == "tripo" else "poll_rodin_job_status"
-        result = send(command, {"request_id": job.ident})
->>>>>>> upstream/main
+    if job.provider == "hyper3d" and job.kind == "fal":
+        result = send("poll_rodin_job_status", {"request_id": job.ident})
         status = str(result.get("status", "")).upper() if isinstance(result, dict) else ""
         # A failed job also carries "error"; read the status first so it counts
         # as the provider's verdict, not as a lost connection.
@@ -407,15 +336,9 @@ def poll(send: Send, job: Job) -> tuple[str, Any]:
 
 
 def import_result(send: Send, job: Job, detail: Any) -> Any:
-<<<<<<< HEAD
-    if job.provider == "hyper3d" and job.kind == "fal":
-=======
     if job.provider == "meshy":
         result = send("import_generated_asset_meshy", {"name": job.name, "model_url": detail})
-    elif job.provider == "tripo":
-        result = send("import_generated_asset_tripo", {"request_id": job.ident, "name": job.name})
     elif job.provider == "hyper3d" and job.kind == "fal":
->>>>>>> upstream/main
         result = send("import_generated_asset", {"request_id": job.ident, "name": job.name})
     elif job.provider == "hyper3d":
         result = send("import_generated_asset", {"task_uuid": job.ident.split("|", 1)[0], "name": job.name})

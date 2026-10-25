@@ -1,14 +1,8 @@
 """generate_3d drives every provider through one submit/poll/import flow.
 
 A fake addon replays each provider's real reply shapes, so these pin the
-<<<<<<< HEAD
 shapes the flow depends on: fal request ids, Rodin main-site subscription
-keys, and Tencent-style Hunyuan responses.
-=======
-shapes the flow depends on: Premium and fal request ids, Rodin main-site
-subscription keys, Tencent-style Hunyuan responses, and Meshy's preview then
-refine tasks.
->>>>>>> upstream/main
+keys, Tencent-style Hunyuan responses, and Meshy's preview then refine tasks.
 """
 
 import asyncio
@@ -238,10 +232,7 @@ def test_repeating_an_unfinished_request_resumes_instead_of_paying_again(tmp_pat
     second = asyncio.run(call())
     assert 'job="hyper3d:fal:r1"' in first and 'job="hyper3d:fal:r1"' in second
     assert "resumed" in second
-<<<<<<< HEAD
     assert [c for c, _ in send.calls].count("create_rodin_job") == 1
-=======
-    assert [c for c, _ in send.calls].count("create_tripo_job") == 1
 
 
 # ------------------------------------------------------------------- Meshy
@@ -381,7 +372,6 @@ def test_meshy_resent_request_resumes_across_restarts_without_paying_again(tmp_p
     send = _meshy(statuses)
     path = tmp_path / "pending.json"
     monkeypatch.setattr(server, "get_blender_connection", lambda: None)
-    monkeypatch.setattr(server, "_premium_generators", lambda _: [])
     monkeypatch.setattr(server, "_own_key_generators", lambda _: {"meshy": True})
     monkeypatch.setattr(server, "_generation_send", send)
     # A new Pending per call, as a restarted server would read the file.
@@ -489,21 +479,17 @@ def test_meshy_handles_name_a_meshy_task_kind():
 
 
 def test_meshy_provider_choice():
-    assert choose_provider("meshy", [], {"meshy": True}) == ("meshy", False)
-    assert choose_provider("auto", [], {"hunyuan3d": False, "hyper3d": False, "meshy": True}) == ("meshy", False)
+    assert choose_provider("meshy", {"meshy": True}) == "meshy"
+    assert choose_provider("auto", {"hunyuan3d": False, "hyper3d": False, "meshy": True}) == "meshy"
     # Last in the own-key order: Sid decides where it belongs.
-    assert choose_provider("auto", [], {"hunyuan3d": True, "hyper3d": True, "meshy": True}) == ("hunyuan3d", False)
+    assert choose_provider("auto", {"hunyuan3d": True, "hyper3d": True, "meshy": True}) == "hunyuan3d"
     with pytest.raises(GenerationError, match="Meshy API key"):
-        choose_provider("meshy", [], {"meshy": False})
-    # Own key only: never picked by, or available through, Premium.
-    assert choose_provider("auto", ["hyper3d"], {"meshy": True}) == ("hyper3d", True)
-    with pytest.raises(GenerationError, match="own Meshy API key only"):
-        choose_provider("meshy", ["hyper3d"], {})
+        choose_provider("meshy", {"meshy": False})
 
 
 def test_nothing_enabled_mentions_meshy():
     with pytest.raises(GenerationError, match="Meshy"):
-        choose_provider("auto", [], {"hunyuan3d": False, "hyper3d": False, "meshy": False})
+        choose_provider("auto", {"hunyuan3d": False, "hyper3d": False, "meshy": False})
 
 
 def test_meshy_key_never_crosses_the_mcp_side(tmp_path):
@@ -532,7 +518,7 @@ def test_meshy_is_an_own_key_generator_and_reported(monkeypatch):
 
     blender = _StatusBlender({"get_meshy_status"})
     assert server._own_key_generators(blender) == {"hunyuan3d": False, "hyper3d": False, "meshy": True}
-    assert server._integrations(blender, [])["generators"]["meshy"] == "on"
+    assert server._integrations(blender)["generators"]["meshy"] == "on"
 
 
 def test_missing_meshy_commands_explain_the_setup(monkeypatch):
@@ -570,30 +556,11 @@ def test_meshy_reply_keeps_its_real_world_scale(monkeypatch):
 
 
 def test_other_generators_still_get_the_rescale_advice(monkeypatch):
-    send = FakeAddon({"poll_tripo_job_status": {"status": "COMPLETED"},
-                      "import_generated_asset_tripo": {"succeed": True}})
-    reply = _reply_for(monkeypatch, Job("tripo", "rid", "q1", "Chest"), send)
+    send = FakeAddon({"poll_rodin_job_status": {"status": "COMPLETED"},
+                      "import_generated_asset": {"succeed": True}})
+    reply = _reply_for(monkeypatch, Job("hyper3d", "fal", "q1", "Chest"), send)
     assert "scale it to real size" in reply
     assert "Meshy" not in reply
-
-
-def test_meshy_under_premium_says_premium_even_with_no_premium_generators_on(monkeypatch):
-    # Premium selected but no Premium generator ticked: the handshake lists none,
-    # so the own-key path runs and must still explain why Meshy is off.
-    from blender_mcp import server
-
-    class PremiumBlender:
-        def send_command(self, command, params=None, **_kw):
-            if command == "get_meshy_status":
-                return {"enabled": False, "message": "Meshy runs on your own Meshy API key only and isn't "
-                                                     "available while Premium is the generation source."}
-            return {"enabled": False}
-
-    monkeypatch.setattr(server, "get_blender_connection", lambda: PremiumBlender())
-    monkeypatch.setattr(server, "_premium_generators", lambda _: [])
-    reply = asyncio.run(server.generate_3d(None, prompt="a stool", provider="meshy", wait_seconds=10))
-    assert "Premium" in reply
-    assert "tick Meshy" not in reply
 
 
 def test_meshy_switched_off_relays_the_addon_setup_steps(monkeypatch):
@@ -607,8 +574,6 @@ def test_meshy_switched_off_relays_the_addon_setup_steps(monkeypatch):
             return {"enabled": False}
 
     monkeypatch.setattr(server, "get_blender_connection", lambda: OffBlender())
-    monkeypatch.setattr(server, "_premium_generators", lambda _: [])
     reply = asyncio.run(server.generate_3d(None, prompt="a stool", provider="meshy", wait_seconds=10))
     assert reply == ("Error: Meshy integration is currently disabled. To enable it: 1. In the 3D Viewport, "
                      "find the MCP for Blender panel")
->>>>>>> upstream/main

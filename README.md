@@ -712,7 +712,7 @@ The AI writes Blender Python itself for modelling, layout, materials, animation,
 | `execute_blender_code` | Run Python in your live Blender |
 | `look` | See the result from the `viewport`, `camera`, `angles` (auto-framed multi-view sheet, any direction) or `frames` (animation strip), drawn `solid`, `material`, `rendered`, `wireframe` or `xray`; or show a render or image file |
 | `get_scene_info` | Compact scene summary, one line per object with the fields you pick (placement, materials, topology, weights, ...); drill in with `root` or `query` |
-| `generate_3d` | One call to generate and import a model with Tripo, Hunyuan3D, Hyper3D Rodin or Meshy. Premium generators are preferred automatically |
+| `generate_3d` | One call to generate and import a model with Hunyuan3D, Hyper3D Rodin or Meshy |
 | `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
 | `get_addon_status` | Blender version, addon version, and which libraries and generators are switched on |
 | `disable_telemetry`, `record_trajectory_feedback` | Data collection controls |
@@ -734,7 +734,7 @@ The toggle sits under **Tencent Hunyuan 3D → Official API** in the sidebar.
 
 [Meshy](https://www.meshy.ai/) generates textured 3D models from a text prompt or a reference image,
 sized to real-world height with the origin at the bottom, so models arrive standing on the ground at a plausible size.
-It runs on your own Meshy API key only, not through Premium. API keys need a paid Meshy plan:
+It runs on your own Meshy API key. API keys need a paid Meshy plan:
 [get a Meshy API key](https://www.meshy.ai/developers/keys?utm_source=mcp-for-blender&utm_medium=integration&utm_campaign=blender-addon).
 Tick **Meshy** under **AI Model Generation** in the sidebar, choose a **Model**, and paste the key.
 

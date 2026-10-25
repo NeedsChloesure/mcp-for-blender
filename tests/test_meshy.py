@@ -72,12 +72,10 @@ def _install_bpy_stubs(monkeypatch, scene):
 
 def _load_addon(monkeypatch, **scene_attrs):
     monkeypatch.delenv("BLENDERMCP_MESHY_API_KEY", raising=False)
-    monkeypatch.delenv("BLENDERMCP_PREMIUM_LICENSE_KEY", raising=False)
     scene = types.SimpleNamespace(
         blendermcp_use_meshy=False,
         blendermcp_meshy_model="latest",
         blendermcp_meshy_api_key="",
-        blendermcp_use_tripo=False,
         blendermcp_use_polyhaven=False,
         blendermcp_use_hyper3d=False,
         blendermcp_use_hunyuan3d=False,
@@ -142,19 +140,6 @@ def test_meshy_status_reports_sidebar_state(monkeypatch):
     assert ready["model"] == "meshy-6"
     assert "Meshy 7.1" in ready["message"]
     assert KEY not in str(ready)
-
-
-def test_meshy_is_off_under_premium(monkeypatch):
-    addon, _bpy, _scene = _ready(monkeypatch)
-    monkeypatch.setattr(addon, "premium_active", lambda: True)
-    server = addon.BlenderMCPServer()
-
-    status = server.get_meshy_status()
-    assert status["enabled"] is False
-    assert "Premium" in status["message"]
-
-    blocked = server._execute_command_internal({"type": "create_meshy_job", "params": {"text_prompt": "a teapot"}})
-    assert blocked["status"] == "error"
 
 
 # ------------------------------------------------------------------ create

@@ -396,14 +396,7 @@ def _integrations(blender: BlenderConnection) -> dict:
     """Which libraries (search_assets) and generators (generate_3d) are on. Reads
     local settings only."""
     status = {}
-<<<<<<< HEAD
-    for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d"):
-=======
     for name in ("polyhaven", "sketchfab", "polypizza", "hunyuan3d", "hyper3d", "meshy"):
-        if name in (premium_generators or []):
-            status[name] = "on (Premium)"
-            continue
->>>>>>> upstream/main
         try:
             reply = blender.send_command(f"get_{name}_status")
             status[name] = "on" if reply.get("enabled") else "off"
@@ -411,11 +404,7 @@ def _integrations(blender: BlenderConnection) -> dict:
             status[name] = "not in this addon version" if _addon_lacks(e) else "unknown"
     return {
         "libraries": {k: status[k] for k in ("polyhaven", "sketchfab", "polypizza")},
-<<<<<<< HEAD
-        "generators": {k: status[k] for k in ("hunyuan3d", "hyper3d")},
-=======
-        "generators": {k: status[k] for k in ("tripo", "hunyuan3d", "hyper3d", "meshy")},
->>>>>>> upstream/main
+        "generators": {k: status[k] for k in ("hunyuan3d", "hyper3d", "meshy")},
     }
 
 
@@ -1501,13 +1490,8 @@ def _generation_send(command: str, params: dict):
         return get_blender_connection().send_command(command, params)
     except Exception as e:
         if _addon_lacks(e):
-<<<<<<< HEAD
-=======
-            if "tripo" in command:
-                raise generation.Unsupported(TRIPO_UNAVAILABLE)
             if "meshy" in command:
                 raise generation.Unsupported(missing_feature("Meshy", "Meshy"))
->>>>>>> upstream/main
             label = "Hunyuan3D" if "hunyuan" in command else "Hyper3D Rodin"
             raise generation.Unsupported(missing_feature(label, label))
         raise
@@ -1528,9 +1512,7 @@ def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
 
 
 def _meshy_unavailable(blender: BlenderConnection) -> str:
-    """Why Meshy can't run, in the addon's words: switched off, no key, or
-    Premium selected. Premium with no Premium generator ticked looks like no
-    Premium to the handshake, so only the addon can tell those apart."""
+    """Why Meshy can't run, in the addon's words: switched off or no key."""
     try:
         reply = blender.send_command("get_meshy_status")
     except Exception as e:
@@ -1601,16 +1583,9 @@ async def generate_3d(
     - image: Instead of a prompt: an absolute image file path or an http(s) URL. Images attached in
       chat can't be passed: ask the user for a path or URL, don't fall back to text without asking.
     - name: Object name in the scene. Defaults to one made from the prompt.
-<<<<<<< HEAD
-    - provider: auto (default), hunyuan3d or hyper3d. Auto picks the first enabled generator.
+    - provider: auto (default), hunyuan3d, hyper3d or meshy. Auto picks the first enabled generator.
     - quality: "standard" or "high". Omit for the provider default; "high" only when the user
       asks for more detail.
-=======
-    - provider: auto (default), tripo, hunyuan3d, hyper3d or meshy. Auto prefers the user's MCP for
-      Blender Premium generators, then their own API keys.
-    - quality: "standard" or "high" (Premium). Omit for the user's default; "high" only when the
-      user asks for more detail.
->>>>>>> upstream/main
     - bbox_condition: hyper3d only: [length, width, height] proportions.
     - job: A handle from an earlier call, to resume waiting for it.
     - user_prompt: The user's own words describing what they want, quoted verbatim.
@@ -1625,17 +1600,11 @@ async def generate_3d(
         if bool(prompt) == bool(image):
             return "Error: give exactly one of prompt or image."
         blender = get_blender_connection()
-<<<<<<< HEAD
-        chosen = generation.choose_provider(provider, _own_key_generators(blender))
-        note = ""
-=======
-        premium = _premium_generators(blender)
-        own_keys = {} if premium else _own_key_generators(blender)
-        if not premium and (provider or "").lower() == "meshy" and not own_keys.get("meshy"):
+        own_keys = _own_key_generators(blender)
+        if (provider or "").lower() == "meshy" and not own_keys.get("meshy"):
             return f"Error: {_meshy_unavailable(blender)}"
-        chosen, is_premium = generation.choose_provider(provider, premium, own_keys)
-        note = "" if is_premium else premium_hint_once(ctx, {"mode": None})
->>>>>>> upstream/main
+        chosen = generation.choose_provider(provider, own_keys)
+        note = ""
         pending = _pending_generations()
         key = generation.request_key(chosen, prompt, image, quality, bbox_condition)
         started = pending.find(key)

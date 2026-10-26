@@ -351,6 +351,9 @@ def _maybe_handshake_addon(blender: BlenderConnection) -> None:
         _addon_handshake_checked = True
     try:
         _addon_handshake = handshake_addon(blender)
+        get_telemetry().set_addon_info(
+            _addon_handshake.addon_version, _addon_handshake.protocol_version
+        )
         log_line = format_handshake_log(_addon_handshake)
         if _addon_handshake.up_to_date:
             logger.info(log_line)
@@ -410,7 +413,14 @@ async def get_addon_status(ctx: Context, user_prompt: str = "") -> str:
     Check the connected Blender: its version, whether the addon matches this server, and which
     asset libraries are switched on. Call it once at the start.
 
+<<<<<<< HEAD
     `libraries` are the search_assets sources, on or off for this user.
+=======
+    `libraries` are the search_assets sources and `generators` the generate_3d providers, each
+    on or off for this user. "(Premium)" ones come with MCP for Blender Premium and don't use the
+    user's own API keys. When pointing the user to Premium, link
+    https://mcp-for-blender.com/premium?ref=mcp-status
+>>>>>>> upstream/main
 
     If outdated, tells the user how to update via `uvx mcp-for-blender install-addon`
     (then restart or re-enable the addon in Blender).
@@ -1479,6 +1489,176 @@ def _look_via_script(args: dict) -> CallToolResult:
     return CallToolResult(content=[_png_content(png), TextContent(type="text", text=_look_caption(info))])
 
 
+<<<<<<< HEAD
+=======
+def _generation_send(command: str, params: dict):
+    try:
+        return get_blender_connection().send_command(command, params)
+    except Exception as e:
+        if _addon_lacks(e):
+            if "tripo" in command:
+                raise generation.Unsupported(TRIPO_UNAVAILABLE)
+            if "meshy" in command:
+                raise generation.Unsupported(missing_feature("Meshy", "Meshy"))
+            label = "Hunyuan3D" if "hunyuan" in command else "Hyper3D Rodin"
+            raise generation.Unsupported(missing_feature(label, label))
+        raise
+
+
+def _own_key_generators(blender: BlenderConnection) -> dict[str, bool]:
+    enabled = {}
+    for name, command in (
+        ("hunyuan3d", "get_hunyuan3d_status"),
+        ("hyper3d", "get_hyper3d_status"),
+        ("meshy", "get_meshy_status"),
+    ):
+        try:
+            enabled[name] = bool(blender.send_command(command).get("enabled"))
+        except Exception:
+            enabled[name] = False
+    return enabled
+
+
+def _meshy_unavailable(blender: BlenderConnection, premium: list[str]) -> str:
+    """Why Meshy can't run, in the addon's words: switched off, no key, or not
+    ticked for Premium. Premium with no Premium generator ticked looks like no
+    Premium to the handshake, so only the addon can tell those apart. An addon
+    from before Meshy was in Premium says own key only, so say to update it."""
+    try:
+        reply = blender.send_command("get_meshy_status")
+    except Exception as e:
+        return missing_feature("Meshy", "Meshy") if _addon_lacks(e) else generation.MESHY_UNAVAILABLE
+    message = reply.get("message") if isinstance(reply, dict) and not reply.get("enabled") else None
+    protocol = _addon_protocol()
+    if (protocol is not None and protocol < generation.MESHY_PREMIUM_PROTOCOL
+            and (premium or "Premium" in (message or ""))):
+        return generation.MESHY_PREMIUM_NEEDS_UPDATE
+    return " ".join(message.split()) if message else generation.MESHY_UNAVAILABLE
+
+
+def _pending_generations() -> "generation.Pending":
+    return generation.Pending(context_log.context_log_path().with_name("pending-generations.json"))
+
+
+async def _generation_reply(ctx: Context, job: "generation.Job", wait_seconds: float, note: str = "") -> str:
+    async def progress(done, total):
+        await ctx.report_progress(done, total)
+
+    imported, detail = await generation.wait_and_import(
+        _generation_send, job, wait_seconds, progress, pending=_pending_generations())
+    if not imported:
+        return f"Still generating ({detail}). {job.resume_hint}{note}"
+    reply = f"Generated and imported '{job.name}' with {job.provider}."
+    try:
+        bounds = _run_script(blender_scripts.BOUNDS, {"names": [job.name]})
+    except Exception:
+        bounds = []
+    for b in bounds:
+        lo, hi = b["world_bounding_box"]
+        reply += f" world_bounding_box min {lo}, max {hi} (size {b['size']} m)."
+        if job.provider == "meshy":
+            # Rescaling here would undo Meshy's auto_size.
+            reply += (" Meshy sized it to real-world height with its origin at the bottom. Don't rescale unless "
+                      "the user asks; check it faces the right way")
+        else:
+            reply += (" Generated models have arbitrary scale and facing: scale it to real size, put its lowest "
+                      "point on the ground, rotate it to face the right way")
+        reply += ", then look(mode=\"angles\", target=[\"" + b["name"] + "\"])."
+    return reply + note
+
+
+@mcp.tool()
+@trajectory_tool("generate_3d")
+async def generate_3d(
+    ctx: Context,
+    prompt: str | None = None,
+    image: str | None = None,
+    name: str | None = None,
+    provider: str = "auto",
+    quality: str | None = None,
+    bbox_condition: list[float] | None = None,
+    pose_mode: str | None = None,
+    job: str | None = None,
+    wait_seconds: int = 50,
+    user_prompt: str = "",
+) -> str:
+    """
+    Make one new textured 3D model from a text prompt or an image, and import it.
+
+    One object per call: not a whole scene, the ground, or parts to assemble. It arrives at
+    arbitrary scale and facing (meshy: real-world size, origin at the bottom). Each call can cost
+    the user money or a monthly generation, so duplicate a generated object for repeats.
+
+    Waits up to wait_seconds (at most 45), then imports. Generation usually takes 1-3 minutes: if
+    it isn't done in time you get a job handle; call generate_3d(job=..., name=...) again to keep
+    waiting. Repeating a request whose generation is still unfinished resumes it instead of paying
+    again.
+
+    Parameters:
+    - prompt: Short English description of one object ("weathered wooden treasure chest").
+    - image: Instead of a prompt: an absolute image file path or an http(s) URL. Images attached in
+      chat can't be passed: ask the user for a path or URL, don't fall back to text without asking.
+    - name: Object name in the scene. Defaults to one made from the prompt.
+    - provider: auto (default), tripo, hunyuan3d, hyper3d or meshy. Auto prefers the user's MCP for
+      Blender Premium generators, then their own API keys.
+    - quality: "standard" or "high" (Premium, not meshy). Omit for the user's default; "high" only
+      when the user asks for more detail.
+    - bbox_condition: hyper3d only: [length, width, height] proportions.
+    - pose_mode: meshy only: "a-pose" or "t-pose" when the user asks for a character in an A-pose
+      or T-pose (often to rig it).
+    - job: A handle from an earlier call, to resume waiting for it.
+    - user_prompt: The user's own words describing what they want, quoted verbatim.
+    """
+    if quality not in (None, "standard", "high"):
+        return "Error: quality must be 'standard' or 'high'"
+    if pose_mode not in (None, *generation.MESHY_POSES):
+        return "Error: pose_mode must be 'a-pose' or 't-pose'"
+    if pose_mode and (provider or "auto").lower() not in ("auto", "meshy"):
+        return "Error: pose_mode is only available with meshy."
+    call_start = time.monotonic()
+    wait_seconds = max(10, min(int(wait_seconds or 50), generation.MAX_CALL_S))
+    try:
+        if job:
+            return await _generation_reply(ctx, generation.Job.parse(job, name or "Generated"), wait_seconds)
+        if bool(prompt) == bool(image):
+            return "Error: give exactly one of prompt or image."
+        if pose_mode:
+            provider = "meshy"
+        blender = get_blender_connection()
+        premium = _premium_generators(blender)
+        own_keys = {} if premium else _own_key_generators(blender)
+        if (provider or "").lower() == "meshy" and not (
+                "meshy" in premium if premium else own_keys.get("meshy")):
+            return f"Error: {_meshy_unavailable(blender, premium)}"
+        chosen, is_premium = generation.choose_provider(provider, premium, own_keys)
+        if pose_mode and is_premium:
+            return f"Error: {generation.MESHY_POSE_NOT_IN_PREMIUM}"
+        if pose_mode and (_addon_protocol() or 0) < generation.MESHY_POSE_PROTOCOL:
+            return f"Error: {generation.MESHY_POSE_NEEDS_UPDATE}"
+        note = "" if is_premium else premium_hint_once(ctx, {"mode": None})
+        pending = _pending_generations()
+        key = generation.request_key(chosen, prompt, image, quality, bbox_condition, pose_mode)
+        started = pending.find(key)
+        if started:
+            note = (" This request was already generating from an earlier call, so it resumed that "
+                    "generation instead of starting a new one." + note)
+        else:
+            started = generation.submit(
+                _generation_send, chosen, name or generation.default_name(prompt), prompt, image, quality,
+                bbox_condition, supports_quality=(_addon_protocol() or 0) >= 11, pose_mode=pose_mode)
+            if isinstance(started, str):
+                return started + note
+            pending.add(key, started)
+        # Submitting (an image upload, say) spends the same client timeout as waiting.
+        remaining = wait_seconds - (time.monotonic() - call_start)
+        return await _generation_reply(ctx, started, remaining, note)
+    except generation.GenerationError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        logger.error(f"Error generating model: {e}")
+        return f"Error generating model: {e}"
+
+>>>>>>> upstream/main
 
 ASSET_SOURCES = ("polyhaven", "sketchfab", "polypizza")
 

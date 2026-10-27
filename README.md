@@ -128,7 +128,16 @@ curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
 **Windows** (PowerShell)
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"
+irm https://www.mcp-for-blender.com/install.ps1 | iex
+```
+
+From Command Prompt instead: `powershell -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"`
+
+Prefer not to run a script, or Windows Defender blocked it? Install uv with winget, open a new terminal, then run setup:
+
+```powershell
+winget install --id=astral-sh.uv -e
+uvx mcp-for-blender setup
 ```
 
 Already have uv? Run `uvx mcp-for-blender setup` instead.
@@ -153,7 +162,9 @@ brew install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Windows
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+winget install --id=astral-sh.uv -e
+# or, with uv's installer
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 > **Warning:** Do not proceed before installing uv. Use the official installer — *not* `pip install uv`.
@@ -285,10 +296,10 @@ curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
 
 ```powershell
 # Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"
+irm https://www.mcp-for-blender.com/install.ps1 | iex
 ```
 
-Already have uv? Run `uvx mcp-for-blender setup` instead. See [Quickstart](#quickstart) for what it changes. The rest of this section covers manual setup.
+Already have uv? Run `uvx mcp-for-blender setup` instead. On Windows, `winget install --id=astral-sh.uv -e` installs uv without running a script. See [Quickstart](#quickstart) for what it changes. The rest of this section covers manual setup.
 
 ### Prerequisites
 
@@ -306,7 +317,13 @@ brew install uv
 
 **Windows**
 ```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+winget install --id=astral-sh.uv -e
+```
+
+Then open a new terminal so it's on your PATH. Or use uv's installer:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
 Then add uv to the user path in Windows (you may need to restart Claude Desktop after):
@@ -709,7 +726,9 @@ The AI writes Blender Python itself for modelling, layout, materials, animation,
 | `get_scene_info` | Compact scene summary, one line per object with the fields you pick (placement, materials, topology, weights, ...); drill in with `root` or `query` |
 | `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
 | `get_addon_status` | Blender version, addon version, and which asset libraries are switched on |
-| `disable_telemetry` | Data collection controls (a no-op: this fork has no telemetry) |#### Poly Haven
+| `disable_telemetry` | Data collection controls (a no-op: this fork has no telemetry) |
+
+#### Poly Haven
 
 [Poly Haven](https://polyhaven.com/) publishes around 2,400 HDRIs, textures and models,
 all CC0 and free, funded by donations rather than by selling the assets. There is no API

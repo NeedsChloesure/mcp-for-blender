@@ -1,7 +1,7 @@
-# Code created by Siddharth Ahuja: www.github.com/ahujasid © 2025
+# MCP for Blender — this fork: https://github.com/NeedsChloesure/mcp-for-blender
+# Originally created by Siddharth Ahuja © 2025
 
 import re
-import textwrap
 import bpy
 import mathutils
 import json
@@ -34,7 +34,7 @@ bl_info = {
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > MCP for Blender",
     "description": "Connect Blender to Claude via MCP",
-    "doc_url": "https://mcp-for-blender.com/",
+    "doc_url": "https://github.com/NeedsChloesure/mcp-for-blender",
     "category": "Interface",
 }
 
@@ -49,8 +49,6 @@ MAX_SNAPSHOT_OBJECTS = 4000
 # would otherwise make `selected` the dominant field of both step snapshots.
 # Keep in sync with blender_mcp.trajectory.MAX_SNAPSHOT_SELECTED.
 MAX_SNAPSHOT_SELECTED = 1000
-
-DISCORD_URL = "https://discord.gg/SNqPn4TcKQ"
 
 # Add User-Agent as required by Poly Haven API
 REQ_HEADERS = requests.utils.default_headers()
@@ -267,7 +265,7 @@ POLYHAVEN_API_BASE = "https://api.polyhaven.com"
 POLYHAVEN_HEADERS = dict(REQ_HEADERS)
 POLYHAVEN_HEADERS["User-Agent"] = (
     "blender-mcp/" + ".".join(str(part) for part in bl_info["version"])
-    + " (+https://github.com/ahujasid/blender-mcp)"
+    + " (+https://github.com/NeedsChloesure/mcp-for-blender)"
 )
 
 # (connect, read). The read timeout applies per socket read rather than to the
@@ -4239,22 +4237,6 @@ class BLENDERMCP_PT_Panel(bpy.types.Panel):
             else:
                 col.prop(scene, "blendermcp_polypizza_api_key", text="API Key")
 
-        # Community section
-        layout.separator()
-        community_box = layout.box()
-
-        col = community_box.column(align=True)
-        # Wrap by panel width so Blender doesn't elide the phrase mid-line.
-        ui_scale = context.preferences.system.ui_scale
-        region_width = context.region.width if context.region else 300
-        chars = max(12, int((region_width - 30) / (7 * ui_scale)))
-        for line in textwrap.wrap("Stay updated with the latest developments", chars):
-            col.label(text=line)
-        col.separator()
-        row = col.row()
-        row.scale_y = 1.3
-        row.operator("wm.url_open", text="Join Discord", icon='URL').url = DISCORD_URL
-
         layout.separator()
         draw_addon_update(layout)
 
@@ -4423,7 +4405,7 @@ class BLENDERMCP_OT_OpenTerms(bpy.types.Operator):
 
     def execute(self, context):
         # Open the Terms and Conditions on GitHub
-        terms_url = "https://github.com/ahujasid/blender-mcp/blob/main/TERMS_AND_CONDITIONS.md"
+        terms_url = "https://github.com/NeedsChloesure/mcp-for-blender/blob/main/TERMS_AND_CONDITIONS.md"
         try:
             import webbrowser
             webbrowser.open(terms_url)

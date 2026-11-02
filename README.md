@@ -1,8 +1,6 @@
 <div align="center">
 
-# MCP for Blender
-
-**Connect Blender to any LLM**
+<img src="assets/logo-banner.svg" alt="MCP for Blender — Connect Blender to any LLM" width="480" />
 
 A personal fork of [MCP for Blender](https://github.com/ahujasid/mcp-for-blender), kept as a
 drop-in replacement for the official build: the package name (`mcp-for-blender`), the
@@ -13,6 +11,27 @@ where `uv` reads the code from — this checkout instead of PyPI.
 
 Prompt-assisted 3D modeling, scene creation, and manipulation — driven by AI.
 
+<<<<<<< HEAD
+=======
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/blender-mcp?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/blender-mcp)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/SNqPn4TcKQ)
+[![Website](https://img.shields.io/badge/Website-mcp--for--blender.com-black)](https://mcp-for-blender.com/)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ahujasid)
+[![PyPI Version](https://img.shields.io/pypi/v/mcp-for-blender?color=blue)](https://pypi.org/project/mcp-for-blender/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+<a href="https://trendshift.io/repositories/14834?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14834" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/14834" alt="ahujasid%2Fblender-mcp | Trendshift" width="250" height="55"/></a> <a href="https://trendshift.io/repositories/14834?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-14834" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/14834/daily?language=Python" alt="ahujasid%2Fmcp-for-blender | Trendshift" width="250" height="55"/></a>
+
+<br />
+
+**Supporters**
+
+[CodeRabbit](https://www.coderabbit.ai/)
+[Guillermo Rauch](https://github.com/rauchg)
+
+**All supporters:** [Support this project](https://github.com/sponsors/ahujasid)
+
+>>>>>>> upstream/main
 </div>
 
 ---
@@ -104,7 +123,16 @@ curl -LsSf https://www.mcp-for-blender.com/install.sh | sh
 **Windows** (PowerShell)
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"
+irm https://www.mcp-for-blender.com/install.ps1 | iex
+```
+
+From Command Prompt instead: `powershell -c "irm https://www.mcp-for-blender.com/install.ps1 | iex"`
+
+Prefer not to run a script, or Windows Defender blocked it? Install uv with winget, open a new terminal, then run setup:
+
+```powershell
+winget install --id=astral-sh.uv -e
+uvx mcp-for-blender setup
 ```
 
 Already have uv? Run `uvx mcp-for-blender setup` instead.
@@ -272,7 +300,15 @@ The addon starts its server when Blender opens. To check, press `N` in the 3D vi
 | **Material control** | Apply and modify materials and colors |
 | **Visual verification** | Multi-angle, camera, wireframe, X-ray and animation-strip views, plus renders, so the AI checks its own work |
 | **Code execution** | The AI writes Blender Python directly |
+<<<<<<< HEAD
 | **Asset libraries** | Poly Haven assets, Sketchfab models and Poly Pizza low-poly models |
+=======
+| **Asset & model generation** | Poly Haven assets, Sketchfab models, Poly Pizza low-poly models, and AI-generated 3D models via Meshy, Tripo, Hyper3D Rodin and Hunyuan3D |
+
+## Premium
+
+Generate AI 3D models (Meshy, Hunyuan3D, Tripo, Hyper3D Rodin) straight into Blender without bringing your own API keys. [More details](https://www.mcp-for-blender.com/premium?ref=readme)
+>>>>>>> upstream/main
 
 ## Components
 
@@ -725,8 +761,45 @@ The AI writes Blender Python itself for modelling, layout, materials, animation,
 | `look` | See the result from the `viewport`, `camera`, `angles` (auto-framed multi-view sheet, any direction) or `frames` (animation strip), drawn `solid`, `material`, `rendered`, `wireframe` or `xray`; or show a render or image file |
 | `get_scene_info` | Compact scene summary, one line per object with the fields you pick (placement, materials, topology, weights, ...); drill in with `root` or `query` |
 | `search_assets` / `import_asset` | [Poly Haven](https://polyhaven.com/) HDRIs, textures and models, [Sketchfab](https://sketchfab.com/) models, [Poly Pizza](https://poly.pizza/) low-poly models |
+<<<<<<< HEAD
 | `get_addon_status` | Blender version, addon version, and which asset libraries are switched on |
 | `disable_telemetry` | Data collection controls (a no-op: this fork has no telemetry) |
+=======
+| `get_addon_status` | Blender version, addon version, and which libraries and generators are switched on |
+| `disable_telemetry`, `record_trajectory_feedback` | Data collection controls |
+
+#### Hunyuan3D on Tencent Cloud (Official API mode)
+
+Which Tencent Cloud service the addon must call depends on where your account lives:
+
+| Account | Service the addon calls | Region | Sidebar toggle |
+|---|---|---|---|
+| Mainland (cloud.tencent.com) | AI3D 3.0 (`ai3d`, version `2025-05-13`) | `ap-guangzhou` | leave **International (Pro) account** off (default) |
+| International (tencentcloud.com), *Hunyuan-to-3D (Professional)* | `hunyuan`, version `2023-09-01`, PBR enabled | `ap-singapore` | tick **International (Pro) account** |
+
+International credentials sent to the mainland endpoint fail with `AuthFailure.SignatureFailure` or
+`ResourceUnavailable`, so tick the toggle when your SecretId/SecretKey come from tencentcloud.com.
+The toggle sits under **Tencent Hunyuan 3D → Official API** in the sidebar.
+
+#### Tripo
+
+[Tripo](https://www.tripo3d.ai/) generates textured 3D models from a text prompt or a reference image.
+It runs through [Premium](#premium) with no key, or on your own Tripo API key.
+Through Premium, text uses your default quality and an image counts as one high-quality generation.
+[Get a Tripo API key](https://developers.tripo3d.ai/en/keys).
+Tick **Tripo** under **AI Model Generation** in the sidebar, choose a **Model**, and paste the key.
+
+#### Meshy
+
+[Meshy](https://www.meshy.ai/) generates textured 3D models from a text prompt or a reference image,
+sized to real-world height with the origin at the bottom, so models arrive standing on the ground at a plausible size.
+It runs through [Premium](#premium) with no key, or on your own Meshy API key.
+Through Premium, Meshy uses its latest model and each model counts as one standard generation.
+Your own API key needs a paid Meshy plan:
+[get a Meshy API key](https://www.meshy.ai/developers/keys?utm_source=mcp-for-blender&utm_medium=integration&utm_campaign=blender-addon).
+Tick **Meshy** under **AI Model Generation** in the sidebar, choose a **Model**, and paste the key.
+On your own key, ask for a character "in an A-pose" or "in a T-pose" and Meshy generates it in that pose, ready to rig.
+>>>>>>> upstream/main
 
 #### Poly Haven
 
@@ -806,6 +879,12 @@ Here are some examples of what you can ask Claude to do:
 | *"Create a beach vibe using HDRIs, textures, and models like rocks and vegetation from Poly Haven"* | [Watch](https://www.youtube.com/watch?v=I29rn92gkC4) |
 | Give a reference image, and create a Blender scene out of it | [Watch](https://www.youtube.com/watch?v=FDRb03XPiRo) |
 | *"Get information about the current scene, and make a threejs sketch from it"* | [Watch](https://www.youtube.com/watch?v=jxbNI5L7AH8) |
+<<<<<<< HEAD
+=======
+| *"Generate a 3D model of a garden gnome through Hyper3D"* | |
+| *"Generate a wooden rocking chair with Meshy"* | |
+| *"Generate a ceramic teapot with Tripo"* | |
+>>>>>>> upstream/main
 | *"Fill this room with low-poly furniture from Poly Pizza"* | |
 | *"Make this car red and metallic"* | |
 | *"Create a sphere and place it above the cube"* | |
@@ -824,6 +903,14 @@ You can store these values there so they survive Blender restarts:
 
 - Sketchfab API Key
 - Poly Pizza API Key
+<<<<<<< HEAD
+=======
+- Hyper3D API Key
+- Hunyuan3D SecretId / SecretKey
+- Hunyuan3D API URL
+- Meshy API Key
+- Tripo API Key
+>>>>>>> upstream/main
 
 For headless setups or CI, credentials can also be injected by environment variables:
 
@@ -831,6 +918,15 @@ For headless setups or CI, credentials can also be injected by environment varia
 |---|
 | `BLENDERMCP_SKETCHFAB_API_KEY` |
 | `BLENDERMCP_POLYPIZZA_API_KEY` |
+<<<<<<< HEAD
+=======
+| `BLENDERMCP_HYPER3D_API_KEY` |
+| `BLENDERMCP_HUNYUAN3D_SECRET_ID` |
+| `BLENDERMCP_HUNYUAN3D_SECRET_KEY` |
+| `BLENDERMCP_HUNYUAN3D_API_URL` |
+| `BLENDERMCP_MESHY_API_KEY` |
+| `BLENDERMCP_TRIPO_API_KEY` |
+>>>>>>> upstream/main
 
 ---
 

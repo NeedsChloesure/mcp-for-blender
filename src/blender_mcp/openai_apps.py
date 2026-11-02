@@ -241,6 +241,13 @@ SCENE_CHANGING_COMMANDS = frozenset({
     "download_polyhaven_asset",
     "download_sketchfab_model",
     "download_polypizza_model",
+<<<<<<< HEAD
+=======
+    "import_generated_asset",
+    "import_generated_asset_hunyuan",
+    "import_generated_asset_tripo",
+    "import_generated_asset_meshy",
+>>>>>>> upstream/main
 })
 
 # How long Blender must have been quiet before the app captures on its own, so

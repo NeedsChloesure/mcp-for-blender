@@ -70,6 +70,9 @@ def test_newer_main_is_offered(monkeypatch, addon):
 @pytest.mark.parametrize("delta", [0, -1])
 def test_same_or_older_main_is_never_offered(monkeypatch, addon, delta):
     major, minor = addon.bl_info["version"][:2]
+    if delta and not minor:
+        # x.0 is preceded by (x-1).something, not x.-1.
+        major, minor, delta = major - 1, 9, 0
     _serve(monkeypatch, addon, types.SimpleNamespace(
         status_code=200, text=_with_version((major, minor + delta), addon.ADDON_PROTOCOL_VERSION)))
     addon.check_for_addon_update()

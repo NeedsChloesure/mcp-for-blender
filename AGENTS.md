@@ -26,9 +26,11 @@ surface differs by the telemetry, Premium/Tripo and 3D-generator removals listed
 
 - Remotes: `origin` = `git@github.com:NeedsChloesure/mcp-for-blender.git` (this fork),
   `upstream` = `https://github.com/ahujasid/blender-mcp.git`.
-- Version follows upstream: `pyproject.toml` is `2.2.0` and the addon protocol is `14` at the
+- Version follows upstream: `pyproject.toml` is `2.3.0` and the addon protocol is `14` at the
   time of writing. Keep the version equal to the upstream release merged into `main`; the
-  sync workflow compares the two to decide when to open a PR.
+  sync workflow compares the two to decide when to open a PR. The protocol is this fork's own:
+  it stayed at `14` through the 2.3.0 merge because the addon's command surface didn't change,
+  while upstream's `16` counts generator commands this fork removes.
 - Not published to PyPI. Installation is covered in the README section "Installing this fork".
 
 ---
@@ -59,18 +61,23 @@ The 700 KiB cap is deliberate: Freebuff's `read_files` refuses images above roug
 If ImageMagick is absent and the file is still too large, the note includes the exact
 `magick` command to downscale it.
 
-It is wired in at exactly one place today: `server._viewport_screenshot()`, the native path
-for `look(mode="viewport")` without `shading`. That path returns a `TextContent` block by
-default; `BLENDER_MCP_IMAGE_OUTPUT=inline` restores the old inline `ImageContent`. The
-viewport state in `_meta` is untouched, so the Viewport app's state path is unchanged.
+It is wired in at two places today, both honouring `image_output_mode()`:
 
-Both behaviours are pinned in `tests/test_openai_apps.py`, and `tests/test_compat_matrix.py`
-counts a delivered file as "showing something".
+- `server._look_via_script()` serves every `look` that isn't the plain viewport — `camera`,
+  `angles`, `frames`, `image=`, any explicit `shading=` — and, since upstream's
+  render-by-default change, the *default* `look` too, because `look` now resolves `shading` to
+  `"rendered"` and always goes through this path first. It returns the path as a `TextContent`
+  block; `BLENDER_MCP_IMAGE_OUTPUT=inline` restores the old inline `ImageContent`.
+- `server._viewport_screenshot()`, the native addon capture, is now the fallback when the
+  scripted `look` fails. It delivers the same way. The viewport state in `_meta` is untouched,
+  so the Viewport app's state path is unchanged.
 
-**Known gap:** the other image results still return inline content and therefore hit the same
-bug. `look` modes served by `_look_via_script()` (`camera`, `angles`, `frames`, `image=`, and
-any non-default `shading=`) return `ImageContent`, and `search_assets(previews=...)` returns
-inline thumbnails via `_preview_images()`. If you touch those paths, use
+The native path's two behaviours are pinned in `tests/test_openai_apps.py`, and
+`tests/test_compat_matrix.py` counts a delivered file as "showing something". The scripted
+path's file delivery has no test of its own yet.
+
+**Known gap:** `search_assets(previews=...)` still returns inline thumbnails via
+`_preview_images()` and therefore hits the same bug. If you touch that path, use
 `deliver_image()`/`image_output_mode()`.
 
 ### 2. Fork policy: no telemetry, no Premium, no Tripo
@@ -113,7 +120,7 @@ its dispatch branch. `tests/test_consolidated_tools.py` pins the exact model-fac
 | File | Change |
 |---|---|
 | `image_files.py` | **new** (+186): file-based image delivery described above |
-| `server.py` | viewport screenshot returns a path; telemetry imports, lifespan hooks, per-tool decorators, the observe step and screenshot upload are gone; `disable_telemetry` is a documented no-op; the `record_trajectory_feedback` tool was removed; `_premium_generators`, premium hints/ordering, `TRIPO_UNAVAILABLE` and the Tripo branch are gone; `_integrations()` no longer takes a premium list or reports generators; `generate_3d` and every generation helper are gone (−159/+11) |
+| `server.py` | `_look_via_script()` and the native viewport screenshot both return a path; telemetry imports, lifespan hooks, per-tool decorators, the observe step and screenshot upload are gone; `disable_telemetry` is a documented no-op; the `record_trajectory_feedback` tool was removed; `_premium_generators`, premium hints/ordering, `TRIPO_UNAVAILABLE` and the Tripo branch are gone; `_integrations()` no longer takes a premium list or reports generators; `generate_3d` and every generation helper are gone (−159/+11) |
 | `generation.py` | **deleted** (415 lines): provider table and `choose_provider`, the job runner and polling, the pending-job store, `process_bbox`, Meshy's preview→refine bookkeeping |
 | `addon_manager.py` | `AddonHandshake.premium_generators` and its handshake read removed |
 | `openai_apps.py` | `import_generated_asset_tripo` removed from the scene-changing command set |
@@ -218,6 +225,7 @@ rows, sections, examples, credentials and environment variables.
 | `daa574c` | 2026-10-02 | Adds the upstream-sync workflow |
 | `69cc1fb` | 2026-10-08 | Resolves the upstream 2.1.9 merge (drops Premium/Tripo, keeps the server refactor) |
 | `64560a9` | 2026-10-25 | Resolves the upstream 2.2.0 merge (keeps Meshy, no Premium/Tripo) |
+| — | 2026-11-16 | Resolves the upstream 2.3.0 merge (bind address + render default kept; generators, World Labs and the Claude plugin dropped) |
 
 ---
 
@@ -315,13 +323,18 @@ the PR instead of failing the job.
    `git grep -n -E '^(<<<<<<<|=======$|>>>>>>>)'`
 3. Resolve by taking upstream's feature work while dropping Premium/Tripo/telemetry **and
    every generator**. Upstream keeps adding provider work, so expect `generation.py`, the
-   `#region Hyper3D` / `Hunyuan3D` / `Meshy` blocks, `generate_3d`, its tests and its README
-   sections to come back in each sync: delete them again rather than resolving them. Keep the
-   three asset libraries intact.
+   `#region Hyper3D` / `Hunyuan3D` / `Meshy` blocks, `generate_3d`, World Labs
+   (`generate_gaussian_world`, `worldlabs`), its tests and its README sections to come back in
+   each sync: delete them again rather than resolving them. Also drop the Claude plugin
+   (`.claude-plugin/`, `integrations/claude/`, `test_claude_plugin.py`): it vendors an upstream
+   wheel, so it ships everything above. Keep the three asset libraries intact.
 4. Delete `generation.py` and the generator tests if the merge brought them back; trim
    `RELEASED_SERVER_COMMANDS`, `MODEL_TOOLS` and `SERVER_INSTRUCTIONS` to match.
-5. Copy `addon.py` over the bundled copy, then bump both protocol numbers — this fork's
-   protocol is ahead of upstream's, so the merged value from upstream is always wrong here.
+5. Copy `addon.py` over the bundled copy. Bump both protocol numbers only when the addon's
+   command surface actually changed; the merged value from upstream usually counts generators
+   this fork removes, so don't take it verbatim. The 2.3.0 merge left both at `14` because the
+   command surface was unchanged (check with the command-set helper in
+   `tests/test_compat_matrix.py`).
 6. Run the suite and confirm no markers remain and the premium/tripo/generator grep is empty.
 7. Commit on top of the sync branch (`fix: resolve the upstream X.Y.Z merge for this fork`),
    merge into `main`, push, close the PR.
@@ -330,7 +343,7 @@ the PR instead of failing the job.
 
 ## Known gaps
 
-- File-based delivery covers only the native viewport screenshot; scripted `look` modes and
+- File-based delivery covers every `look` (scripted path and native viewport fallback), but
   `search_assets` previews still return inline images.
 - The addon's telemetry-consent UI is dead weight from the server's perspective.
 - The update check only knows about `main` and cannot install: a user who is told an update is

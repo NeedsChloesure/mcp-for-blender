@@ -310,6 +310,9 @@ The addon cannot be imported without `bpy`; tests load it through stubs, which i
 - **Version:** keep `pyproject.toml` equal to the upstream release merged into `main`. Bumping
   it on its own makes the sync workflow think upstream has drifted.
 - **`upstream` is read-only.** Do not push to it; `origin` is this fork.
+- **No attribution in commits.** Commit messages carry no AI or tool attribution: no
+  `Generated with …` / `Made with …` lines and no `Co-Authored-By:` trailers. This applies to
+  every commit in this repository, including ones written by an agent.
 
 ---
 

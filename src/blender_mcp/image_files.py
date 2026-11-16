@@ -174,8 +174,9 @@ def deliver_image(
     if detail:
         note += " " + detail
     note += (
-        " Open that path with your file-reading tool (for example read_files) to "
-        "see it; this host does not render inline image content."
+        " Open that path with your file-reading tool (for example read_files) to see it. "
+        "Try it even if this host does not render inline image content: an agent hosted "
+        "in the cloud can still read files on the computer it has access to."
     )
     if size_bytes > MAX_IMAGE_BYTES:
         note += (

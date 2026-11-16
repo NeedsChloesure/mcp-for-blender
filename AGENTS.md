@@ -46,7 +46,9 @@ importantly `look`.
 
 The workaround is to **not deliver the image over MCP at all**: write the bytes to a file and
 return that file's absolute path, with an instruction to open it using the model's own
-file-reading tool (`read_files` in Freebuff), which does work there.
+file-reading tool (`read_files` in Freebuff), which does work there. The note says to try it
+regardless: an agent whose runtime is in the cloud still reads files on the computer it has
+access to.
 
 `src/blender_mcp/image_files.py` (186 lines) implements it:
 
@@ -55,7 +57,14 @@ file-reading tool (`read_files` in Freebuff), which does work there.
 | `image_output_mode()` | `file` (default) or `inline`, from `BLENDER_MCP_IMAGE_OUTPUT` |
 | `image_dir()` | where files are written; `BLENDER_MCP_IMAGE_DIR`, default `<tmp>/mcp-for-blender-images` |
 | `save_image()` | unique `<tool>-<timestamp>-<pid>` name, 700 KiB cap, ImageMagick (`magick`/`convert`) downscale attempts 1600→700 px, keeps the newest 40 files |
-| `deliver_image()` | saves and returns the note: absolute path, human-readable size, "open it with your file-reading tool" |
+| `deliver_image()` | saves and returns the note: absolute path, human-readable size, "open it with your file-reading tool" (with "try it anyway" for cloud-hosted agents) |
+
+**Status of the host bug (checked 2026-11-16, Freebuff commit `be2f476`):** the desktop now turns
+an MCP `image` block into a `media` part for tools registered directly, but this chat reaches
+connectors through `call_mcp_tool`, which returns the raw MCP result — the model gets it as JSON
+text, base64 and all. That bridge also caps a Cloud-bound result at 256 KiB (`RESULT_BYTES`), so
+a screenshot over roughly 190 KiB of PNG is replaced outright with "media omitted: too large to
+send to Cloud". File delivery is therefore still the default here; don't flip it to inline.
 
 The 700 KiB cap is deliberate: Freebuff's `read_files` refuses images above roughly 768 KiB.
 If ImageMagick is absent and the file is still too large, the note includes the exact
